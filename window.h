@@ -49,7 +49,6 @@ protected:
     void timerEvent(QTimerEvent *e);
     void keyPressEvent(QKeyEvent *e);
     void closeEvent(QCloseEvent *e);
-    virtual void scrollContentsBy(int dx, int dy);
     int indexOf(const QString &string, int index) const;
     int lastIndexOf(const QString &string, int index) const;
     void updateThumbnails() {
@@ -58,11 +57,7 @@ protected:
     }
     void updateAreas();
     QRect textArea() const;
-    //    void zoom(double ratio);
 public slots:
-    //     void zoomNormal() { zoom(1); }
-    //     void zoomIn();
-    //     void zoomOut();
     void rotateLeft();
     void rotateRight();
     void ensurePointerHidden();
@@ -97,9 +92,7 @@ public slots:
     void toggleAutoZoom();
     void onImageLoadError(void *);
     void onImageLoaded(void *, const QImage &image);
-    void onThumbLoaded(const QImage &thumb);
     void debug();
-    void onThumbThreadFinished();
 
     bool purge();
     void resetLineEditStyleSheet();
@@ -109,7 +102,6 @@ public slots:
 private:
     void modifyIndexes(int index, int added);
     void restartQuitTimer();
-    void updateScrollBars();
     void nextDirectory(int count);
     void setBackgroundColor(const QString &color);
     void parseArgs(const QStringList &args);
@@ -120,17 +112,11 @@ private:
     inline int bound(int cnt) const;
     void moveCurrentIndexBy(int count);
     void removeFile(Data *data);
+    void updateZoom();
 
     enum Sort { None, Alphabetically, Size, CreationDate, Random, Natural };
     enum Area { Top, Bottom, TopLeft, ThumbLeft, BottomLeft, Center,
                 TopRight, ThumbRight, BottomRight, NumAreas };
-
-    struct ThumbInfo {
-        ThumbInfo() : thread(0), requestedWidth(-1) {}
-        QImage image;
-        ThumbLoaderThread *thread;
-        int requestedWidth;
-    };
 
     struct {
         QHash<Data*, int> loading;
@@ -156,15 +142,13 @@ private:
         //      const QString description;
         //  } shortcuts[]; // show info of all shortcuts on ?
 
-        QSet<ThumbLoaderThread*> thumbLoaderThreads;
-        ThumbInfo thumbLeft, thumbRight;
         int thumbMinWidth;
 
         Sort sort;
         QString longestPath;
         int fontSize;
         QBasicTimer updateFontSizeTimer, quitTimer, updateImagesTimer, slideShowTimer,
-            indexBufferTimer, updateScrollBarsTimer, indexBufferClearTimer;
+            indexBufferTimer, indexBufferClearTimer;
         QLineEdit *lineEdit;
         int maxThreads;
         int minSize, maxSize;
@@ -174,6 +158,7 @@ private:
         ImageLoaderThread imageLoaderThread;
         QPoint pressPosition;
         bool midButtonPressed;
+        double zoom;
     } d;
 };
 

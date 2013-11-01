@@ -56,6 +56,7 @@ static inline QSet<int> surrounding(int cur, int count, int maxEntries)
 Window::Window(const QStringList &args, QWidget *parent)
     : QAbstractScrollArea(parent), Flags(FirstImage|DisplayThumbnails)
 {
+    d.zoom = 1.0;
     d.current = -1;
     d.slideShowInterval = 3;
     d.maxImages = 30;
@@ -193,7 +194,7 @@ void Window::mousePressEvent(QMouseEvent *e)
     }
 }
 
-void Window::mouseReleaseEvent(QMouseEvent *e)
+void Window::mouseReleaseEvent(QMouseEvent *)
 {
     if (d.midButtonPressed) {
         d.midButtonPressed = false;
@@ -873,61 +874,40 @@ void Window::paintEvent(QPaintEvent *e)
             if (dt->image.isNull()) {
                 drawText(&p, eventRect, viewportRect, Qt::AlignCenter, fm, "Loading " + QFileInfo(dt->path).fileName());
             } else {
-                const QSize pixmapSize = dt->image.size();
-                int x, y, sy, sx;
-                if (horizontalScrollBar()->isVisible()) {
-                    sx = horizontalScrollBar()->value();
-                    x = 0;
-                } else {
-                    sx = 0;
-                    x = (viewport()->width() - pixmapSize.width()) / 2;
-                }
-
-                if (verticalScrollBar()->isVisible()) {
-                    sy = verticalScrollBar()->value();
-                    y = 0;
-                } else {
-                    sy = 0;
-                    y = (viewport()->height() - pixmapSize.height()) / 2;
-                }
-
-                const QRect source(sx, sy, pixmapSize.width() - sx, pixmapSize.height() - sy);
-                const QRect r(QPoint(x, y), pixmapSize);
-                if (eventRect.isNull() || eventRect.intersects(r))
-                    p.drawImage(r, dt->image);
-                if (test(DisplayThumbnails) && d.data.size() > 1) {
-                    const int thumbWidth = qMin(pixmapSize.width(), qMax(d.thumbMinWidth, r.left() - 2));
-                    // qDebug() << pixmapSize << thumbWidth << r;
-                    ThumbInfo *thumbs[] = { &d.thumbLeft, &d.thumbRight };
-                    for (int i=0; i<2; ++i) {
-                        const int idx = bound(d.current + (i == 0 ? -1 : 1));
-                        if (thumbWidth != thumbs[i]->image.width()
-                            && !d.data.at(idx)->image.isNull()
-                            && (!thumbs[i]->thread || thumbs[i]->requestedWidth != thumbWidth)) {
-                            thumbs[i]->thread = new ThumbLoaderThread(d.data.at(idx)->image, thumbWidth);
-                            d.thumbLoaderThreads.insert(thumbs[i]->thread);
-                            thumbs[i]->requestedWidth = thumbWidth;
-                            connect(thumbs[i]->thread, SIGNAL(finished()),
-                                    this, SLOT(onThumbThreadFinished()));
-                            connect(thumbs[i]->thread, SIGNAL(thumbLoaded(QImage)),
-                                    this, SLOT(onThumbLoaded(QImage)));
-                            thumbs[i]->thread->start();
+                QSize size = dt->image.size();
+                if (qFuzzyCompare(d.zoom, 1.0) && test(AutoZoomEnabled)) {
+                    size.scale(viewport()->size(), Qt::KeepAspectRatio);
+                    QRect rect(QPoint(0, 0), size);
+                    rect.moveCenter(viewport()->rect().center());
+                    p.drawImage(rect, dt->image);
+                    if (test(DisplayThumbnails) && d.data.size() > 1) {
+                        const int thumbWidth = qMin(rect.width(), qMax(d.thumbMinWidth, rect.left() - 2));
+                        // qDebug() << pixmapSize << thumbWidth << r;
+                        for (int i=0; i<2; ++i) {
+                            const int idx = bound(d.current + (i == 0 ? -1 : 1));
+                            const Data *thumb = d.data.at(idx);
+                            if (thumb->image.isNull()) {
+                                size = thumb->image.size();
+                                size.scale(size.height(), thumbWidth, Qt::KeepAspectRatio);
+                                QRect r(QPoint(), size);
+                                r.moveCenter(rect.center());
+                                if (i == 0) {
+                                    r.moveLeft(0);
+                                } else {
+                                    r.moveRight(viewport()->width());
+                                }
+                                p.drawImage(r, thumb->image);
+                            }
                         }
                     }
-                    if (!d.thumbLeft.image.isNull()) {
-                        QRect rr = d.thumbLeft.image.rect();
-                        rr.moveCenter(r.center());
-                        rr.moveLeft(0);
-                        p.drawImage(rr, d.thumbLeft.image);
-                    }
-
-                    if (!d.thumbRight.image.isNull()) {
-                        QRect rr = d.thumbRight.image.rect();
-                        rr.moveCenter(r.center());
-                        rr.moveRight(viewport()->width());
-                        p.drawImage(rr, d.thumbRight.image);
-                    }
+                } else {
+                    size *= d.zoom;
+                    p.save();
+                    p.scale(d.zoom, d.zoom);
+                    p.drawImage(-horizontalScrollBar()->value(), -verticalScrollBar()->value(), dt->image);
+                    p.restore();
                 }
+
             }
             if (test(DisplayFileName)) {
                 drawText(&p, eventRect, textArea(), Qt::AlignTop|Qt::AlignLeft, fm,
@@ -959,7 +939,7 @@ void Window::load(int index)
     Q_ASSERT(index < d.data.size() && index >= 0);
     Data *dt = d.data.at(index);
     Q_ASSERT(dt);
-    if (dt->flags & Data::Failed || d.loading.contains(dt)) {
+    if (dt->flags & Data::Failed || d.loading.contains(dt) || !dt->image.isNull()) {
         // qDebug() << "Not trying to load" << dt->path << "Because" << dt->flags << "but is it really?"
         //          << d.loading.contains(dt);
         return;
@@ -970,16 +950,6 @@ void Window::load(int index)
         flags |= ImageLoaderThread::NoSmoothScale;
     if (index == d.current || index == bound(d.current - 1) || index == bound(d.current + 1))
         flags |= ImageLoaderThread::HighPriority;
-    QSize size;
-    if (test(AutoZoomEnabled)) {
-        size = viewport()->size();
-        if (!dt->image.isNull()) {
-            if (!isVisible() || rightSize(dt->image.size(), size))
-                return;
-        }
-    } else if (!dt->image.isNull()) {
-        return;
-    }
     d.loading[dt] = index;
 #if 0
     if (dt->path.endsWith(".pdf", Qt::CaseInsensitive)) {
@@ -1001,7 +971,7 @@ void Window::load(int index)
     } else
 #endif
     {
-        d.imageLoaderThread.load(dt->path, flags, dt->rotation, dt, size);
+        d.imageLoaderThread.load(dt->path, flags, dt->rotation, dt);
     }
 }
 
@@ -1010,7 +980,6 @@ void Window::updateImages()
     if (d.data.isEmpty()) {
         return;
     }
-    d.updateScrollBarsTimer.start(10, this);
     load(d.current);
     // start this first, it won't start again inside the loop
     if (test(FirstImage))
@@ -1074,9 +1043,6 @@ void Window::timerEvent(QTimerEvent *e)
     } else if (e->timerId() == d.updateImagesTimer.timerId()) {
         updateImages();
         d.updateImagesTimer.stop();
-    } else if (e->timerId() == d.updateScrollBarsTimer.timerId()) {
-        updateScrollBars();
-        d.updateScrollBarsTimer.stop();
     } else {
         QAbstractScrollArea::timerEvent(e);
     }
@@ -1347,6 +1313,7 @@ void Window::toggleAutoZoom()
 {
     toggle(AutoZoomEnabled);
     updateImages();
+    updateZoom();
 }
 
 void Window::onImageLoadError(void *userData)
@@ -1400,9 +1367,8 @@ void Window::onImageLoaded(void *userData, const QImage &image)
         if (!rightSize(image.size(), viewport()->size())) {
             load(d.current);
         }
-        d.updateScrollBarsTimer.start(10, this);
         updateAreas();
-        viewport()->update();
+        updateZoom();
     } else if (idx == bound(d.current - 1) || idx == bound(d.current + 1)) {
         updateAreas();
         updateThumbnails();
@@ -1633,12 +1599,32 @@ void Window::keyPressEvent(QKeyEvent *e)
         }
         break;
     case Qt::Key_Plus:
-        d.slideShowInterval *= 0.9;
-        d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+        if (e->modifiers() & Qt::ControlModifier) {
+            d.zoom += .1;
+            updateZoom();
+        } else {
+            d.slideShowInterval *= 0.9;
+            d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+        }
+        break;
+    case Qt::Key_Equal:
+        if (e->modifiers() & Qt::ControlModifier) {
+            d.zoom += .1;
+        } else {
+            d.zoom = 1.0;
+        }
+        updateZoom();
         break;
     case Qt::Key_Minus:
-        d.slideShowInterval *= 1.1;
-        d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+        if (e->modifiers() & Qt::ControlModifier) {
+            if (d.zoom > .1) {
+                d.zoom -= .1;
+                updateZoom();
+            }
+        } else {
+            d.slideShowInterval *= 1.1;
+            d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+        }
         break;
     case Qt::Key_F:
         if (e->modifiers() == Qt::NoModifier) {
@@ -1768,9 +1754,6 @@ void Window::setCurrentIndex(int index)
         Q_ASSERT(index < d.data.size());
         QSet<int> surr = surrounding(index, d.data.size(), d.maxImages);
         QSet<int> remove = surrounding(d.current, d.data.size(), d.maxImages);
-        if (d.current != index) {
-            d.thumbLeft = d.thumbRight = ThumbInfo();
-        }
         d.current = index;
         foreach(int r, remove) {
             if (r != index && !surr.contains(r)) {
@@ -1785,8 +1768,8 @@ void Window::setCurrentIndex(int index)
         }
 
         updateImages();
-        viewport()->update();
     }
+    updateZoom();
 }
 
 void Window::nextDirectory(int count)
@@ -1809,25 +1792,6 @@ void Window::nextDirectory(int count)
         }
     }
     setCurrentIndex(i);
-}
-
-void Window::onThumbLoaded(const QImage &thumb)
-{
-    if (sender() == d.thumbLeft.thread) {
-        d.thumbLeft.image = thumb;
-        d.thumbLeft.thread = 0;
-        d.thumbLeft.requestedWidth = -1;
-    } else if (sender() == d.thumbRight.thread) {
-        d.thumbRight.image = thumb;
-        d.thumbRight.thread = 0;
-        d.thumbRight.requestedWidth = -1;
-    } else {
-        return;
-    }
-
-    updateAreas();
-    viewport()->update(); // ### this is a bug. I have to do this or I get painting errors when rotating
-    // updateThumbnails();
 }
 
 static inline void split(const QRect &rect, QRect *top, QRect *bottom)
@@ -1863,6 +1827,7 @@ void Window::updateAreas()
     d.areas[Center].moveCenter(r.center());
     const QRect left(0, 0, d.areas[Center].left(), r.height());
     const QRect right(d.areas[Center].right(), 0, left.width(), r.height());
+#if 0
     if (test(DisplayThumbnails) && !d.thumbLeft.image.isNull()) {
         split(left, &d.areas[TopLeft], &d.areas[ThumbLeft], &d.areas[BottomLeft]);
         QRect tr = d.thumbLeft.image.rect();
@@ -1882,6 +1847,7 @@ void Window::updateAreas()
         d.areas[ThumbRight] = QRect();
         split(right, &d.areas[TopRight], &d.areas[BottomRight]);
     }
+#endif
     d.areas[BottomRight].adjust(0, 0, 0, 1);
     d.areas[BottomLeft].adjust(0, 0, 0, 1); // ### hacks
     d.areas[Top].setRect(0, 0, r.width(), d.areas[Center].top());
@@ -1906,15 +1872,6 @@ void Window::updateAreas()
         qDebug() << str[i] << d.areas[i];
     }
 #endif
-}
-
-void Window::onThumbThreadFinished()
-{
-    ThumbLoaderThread *t = qobject_cast<ThumbLoaderThread*>(sender());
-    Q_ASSERT(t);
-    Q_ASSERT(d.thumbLoaderThreads.contains(t));
-    d.thumbLoaderThreads.remove(t);
-    delete t;
 }
 
 void Window::closeEvent(QCloseEvent *e)
@@ -2023,34 +1980,6 @@ void Window::removeCurrentImage()
         viewport()->update();
     }
 }
-void Window::updateScrollBars()
-{
-    const QSize vs = viewport()->size();
-    const QSize s = d.current == -1 ? QSize() : d.data.at(d.current)->image.size();
-    const int scrollBarSize = horizontalScrollBar()->sizeHint().height();
-    const bool needh = !test(AutoZoomEnabled) && s.height() > vs.height();
-    const bool needw = !test(AutoZoomEnabled) && s.width() > vs.width();
-    const bool mightneedh = s.height() + scrollBarSize > vs.height();
-    const bool mightneedw = s.width() + scrollBarSize > vs.width();
-    if (needh || (needw && mightneedh)) {
-        verticalScrollBar()->setRange(0, s.height() - vs.height() - scrollBarSize);
-    } else {
-        verticalScrollBar()->setRange(0, 0);
-    }
-
-    if (needw || (needh && mightneedw)) {
-        horizontalScrollBar()->setRange(0, s.width() - vs.width() - scrollBarSize);
-    } else {
-        horizontalScrollBar()->setRange(0, 0);
-    }
-
-}
-void Window::scrollContentsBy(int /*dx*/, int /*dy*/)
-{
-    viewport()->update();
-    //    viewport()->scroll(-dx, -dy);
-}
-
 
 void Window::restartQuitTimer()
 {
@@ -2215,13 +2144,6 @@ void Window::onNetworkReplyFinished(QNetworkReply *reply)
         QBuffer buffer;
         buffer.setData(data);
         QImageReader reader(&buffer);
-        if (test(AutoZoomEnabled)) {
-            QSize s = reader.size();
-            if (s != viewport()->size()) {
-                s.scale(viewport()->size(), Qt::KeepAspectRatio);
-                reader.setScaledSize(s);
-            }
-        }
         node->image = reader.read();
     }
     node->path = reply->url().toString();
@@ -2283,4 +2205,21 @@ void Window::modifyIndexes(int index, int added)
         if (*i >= index)
             (*i) += added;
     }
+}
+void Window::updateZoom()
+{
+    int h = 0, v = 0;
+    if (d.current != -1 && !d.data.isEmpty()) {
+        Data *dt = d.data.at(d.current);
+        if (!dt->image.isNull()) {
+            const QSize size = dt->image.size() * d.zoom;
+            h = qMax(0, size.width() - viewport()->width());
+            v = qMax(0, size.height() - viewport()->height());
+        }
+    }
+
+    horizontalScrollBar()->setRange(0, h);
+    verticalScrollBar()->setRange(0, v);
+    qDebug() << "setting range" << horizontalScrollBar()->maximum() << verticalScrollBar()->maximum() << d.zoom;
+    viewport()->update();
 }

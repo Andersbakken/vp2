@@ -7,6 +7,7 @@ TARGET =
 DEPENDPATH += .
 INCLUDEPATH += .
 mac {
+    QMAKE_CXXFLAGS += -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.9.sdk
     # INCLUDEPATH += /opt/local/include/ImageMagick
     # INCLUDEPATH += /usr/local/include/ImageMagick
     # LIBS += -L/usr/local/lib/
