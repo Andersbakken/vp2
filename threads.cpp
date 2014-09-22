@@ -132,6 +132,7 @@ void ImageLoaderThread::run()
 #endif
         {
             QImageReader reader(node->path);
+#if 0
             if (reader.supportsAnimation()) {
                 QMovie *movie = new QMovie(node->path);
                 if (movie->isValid()) {
@@ -142,6 +143,7 @@ void ImageLoaderThread::run()
                     delete movie;
                 }
             }
+#endif
             QSize size;
             if (!node->size.isEmpty()) {
                 size = reader.size();
