@@ -115,7 +115,7 @@ void ImageLoaderThread::run()
         QImage img;
 #ifdef MAGICK_ENABLED
         if (node->path.endsWith(".pdf", Qt::CaseInsensitive)) {
-            try { 
+            try {
                 Magick::Image pdf(node->path.toStdString());
                 if (pdf.isValid()) {
                     if (!node->size.isNull()) {
@@ -132,6 +132,16 @@ void ImageLoaderThread::run()
 #endif
         {
             QImageReader reader(node->path);
+            if (reader.supportsAnimation()) {
+                QMovie *movie = new QMovie(node->path);
+                if (movie->isValid()) {
+                    emit movieLoaded(node->userData, movie);
+                    delete node;
+                    continue;
+                } else {
+                    delete movie;
+                }
+            }
             QSize size;
             if (!node->size.isEmpty()) {
                 size = reader.size();

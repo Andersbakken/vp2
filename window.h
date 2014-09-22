@@ -10,11 +10,17 @@ struct Data {
 
     QString path;
     QImage image;
+    QMovie *movie;
     int rotation;
 
     bool clear() {
         if (!image.isNull()) {
             image = QImage();
+            return true;
+        }
+        if (movie) {
+            delete movie;
+            movie = 0;
             return true;
         }
         return false;
@@ -97,6 +103,7 @@ public slots:
     void toggleAutoZoom();
     void onImageLoadError(void *);
     void onImageLoaded(void *, const QImage &image);
+    void onMovieLoaded(void *, QMovie *movie);
     void onThumbLoaded(const QImage &thumb);
     void debug();
     void onThumbThreadFinished();

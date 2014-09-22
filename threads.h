@@ -24,6 +24,7 @@ public:
     static bool canLoad(const QString &fileName);
     int pending() const;
 signals:
+    void movieLoaded(void *userData, QMovie *movie);
     void imageLoaded(void *userData, const QImage &image);
     void loadError(void *userData);
 private:

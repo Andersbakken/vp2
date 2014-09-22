@@ -101,6 +101,8 @@ Window::Window(const QStringList &args, QWidget *parent)
     }
     connect(&d.imageLoaderThread, SIGNAL(imageLoaded(void*, QImage)),
             this, SLOT(onImageLoaded(void *, QImage)));
+    connect(&d.imageLoaderThread, SIGNAL(movieLoaded(void*, QMovie *)),
+            this, SLOT(onMovieLoaded(void *, QImage)));
     connect(&d.imageLoaderThread, SIGNAL(loadError(void*)),
             this, SLOT(onImageLoadError(void *)));
     d.imageLoaderThread.start();
@@ -193,7 +195,7 @@ void Window::mousePressEvent(QMouseEvent *e)
     }
 }
 
-void Window::mouseReleaseEvent(QMouseEvent *e)
+void Window::mouseReleaseEvent(QMouseEvent *)
 {
     if (d.midButtonPressed) {
         d.midButtonPressed = false;
@@ -1415,6 +1417,13 @@ void Window::onImageLoaded(void *userData, const QImage &image)
         unset(FirstImage);
         updateImages();
     }
+}
+
+
+void Window::onMovieLoaded(void *, QMovie *movie)
+{
+    Q_ASSERT(movie);
+    movie->moveToThread(QThread::currentThread());
 }
 
 void Window::debug()
