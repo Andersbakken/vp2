@@ -103,7 +103,6 @@ public slots:
     void toggleAutoZoom();
     void onImageLoadError(void *);
     void onImageLoaded(void *, const QImage &image);
-    void onMovieLoaded(void *, QMovie *movie);
     void onThumbLoaded(const QImage &thumb);
     void debug();
     void onThumbThreadFinished();

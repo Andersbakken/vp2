@@ -1002,6 +1002,14 @@ void Window::load(int index)
 #endif
     {
         QImageReader *reader = new QImageReader(dt->path);
+        if (reader->supportsAnimation()) {
+            QMovie *movie = new QMovie(dt->path);
+            if (movie->isValid()) {
+                dt->movie = movie;
+                delete reader;
+                return;
+            }
+        }
         d.imageLoaderThread.load(reader, flags, dt->rotation, dt, size);
     }
 }
@@ -1416,13 +1424,6 @@ void Window::onImageLoaded(void *userData, const QImage &image)
         unset(FirstImage);
         updateImages();
     }
-}
-
-
-void Window::onMovieLoaded(void *, QMovie *movie)
-{
-    Q_ASSERT(movie);
-    movie->moveToThread(QThread::currentThread());
 }
 
 void Window::debug()
