@@ -19,12 +19,11 @@ public:
         HighPriority = 0x2
     };
 
-    void load(const QString &path, uint flags, int rotation, void *userData, const QSize &s = QSize());
+    void load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &s = QSize());
     bool remove(void *userData);
     static bool canLoad(const QString &fileName);
     int pending() const;
 signals:
-    void movieLoaded(void *userData, QMovie *movie);
     void imageLoaded(void *userData, const QImage &image);
     void loadError(void *userData);
 private:
@@ -32,7 +31,8 @@ private:
     mutable QMutex mMutex;
     QWaitCondition mWaitCondition;
     struct Node {
-        QString path;
+        ~Node() { delete reader; }
+        QImageReader *reader;
         QSize size;
         int rotation;
         uint flags;

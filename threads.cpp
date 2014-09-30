@@ -19,14 +19,15 @@ ImageLoaderThread::~ImageLoaderThread()
     clear();
 }
 
-void ImageLoaderThread::load(const QString &p, uint flags, int rotation, void *userData, const QSize &size)
+void ImageLoaderThread::load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &size)
 {
+    Q_ASSERT(reader);
     Node *node = new Node;
     node->next = 0;
     node->flags = flags;
     node->rotation = rotation % 360;
     node->size = size;
-    node->path = p;
+    node->reader = reader;
     node->userData = userData;
     if (rotation % 180 == 90)
         qSwap(node->size.rwidth(), node->size.rheight());
@@ -131,27 +132,14 @@ void ImageLoaderThread::run()
         } else
 #endif
         {
-            QImageReader reader(node->path);
-#if 0
-            if (reader.supportsAnimation()) {
-                QMovie *movie = new QMovie(node->path);
-                if (movie->isValid()) {
-                    emit movieLoaded(node->userData, movie);
-                    delete node;
-                    continue;
-                } else {
-                    delete movie;
-                }
-            }
-#endif
             QSize size;
             if (!node->size.isEmpty()) {
-                size = reader.size();
+                size = node->reader->size();
                 size.scale(node->size, Qt::KeepAspectRatio);
                 if (!(node->flags & NoSmoothScale))
-                    reader.setScaledSize(size);
+                    node->reader->setScaledSize(size);
             }
-            if (reader.read(&img) && (node->flags & NoSmoothScale) && !size.isNull()) {
+            if (node->reader->read(&img) && (node->flags & NoSmoothScale) && !size.isNull()) {
                 img = img.scaled(size);
             }
         }

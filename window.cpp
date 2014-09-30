@@ -101,8 +101,6 @@ Window::Window(const QStringList &args, QWidget *parent)
     }
     connect(&d.imageLoaderThread, SIGNAL(imageLoaded(void*, QImage)),
             this, SLOT(onImageLoaded(void *, QImage)));
-    connect(&d.imageLoaderThread, SIGNAL(movieLoaded(void*, QMovie *)),
-            this, SLOT(onMovieLoaded(void *, QImage)));
     connect(&d.imageLoaderThread, SIGNAL(loadError(void*)),
             this, SLOT(onImageLoadError(void *)));
     d.imageLoaderThread.start();
@@ -1003,7 +1001,8 @@ void Window::load(int index)
     } else
 #endif
     {
-        d.imageLoaderThread.load(dt->path, flags, dt->rotation, dt, size);
+        QImageReader *reader = new QImageReader(dt->path);
+        d.imageLoaderThread.load(reader, flags, dt->rotation, dt, size);
     }
 }
 
