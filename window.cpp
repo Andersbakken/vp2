@@ -73,6 +73,7 @@ Window::Window(const QStringList &args, QWidget *parent)
 
     //    setViewport(new Viewport(this));
     d.lineEdit = new QLineEdit(this);
+    d.search = true;
     new QShortcut(QKeySequence(Qt::Key_Escape), d.lineEdit, SLOT(hide()));
     //     new QShortcut(QKeySequence(Qt::Key_F6), this, SLOT(debug()));
 
@@ -893,8 +894,51 @@ void Window::paintEvent(QPaintEvent *e)
 
                 const QRect source(sx, sy, pixmapSize.width() - sx, pixmapSize.height() - sy);
                 const QRect r(QPoint(x, y), pixmapSize);
-                if (eventRect.isNull() || eventRect.intersects(r))
+                if (eventRect.isNull() || eventRect.intersects(r)) {
                     p.drawImage(r, dt->image);
+                    p.drawRect(r);
+                }
+
+                if (!d.rects.isEmpty()) {
+                    int idx = 0;
+                    QList<Qt::GlobalColor> colors;
+                    colors << Qt::black
+                           << Qt::white
+                           << Qt::darkGray
+                           << Qt::gray
+                           << Qt::lightGray
+                           << Qt::red
+                           << Qt::green
+                           << Qt::blue
+                           << Qt::cyan
+                           << Qt::magenta
+                           << Qt::yellow
+                           << Qt::darkRed
+                           << Qt::darkGreen
+                           << Qt::darkBlue
+                           << Qt::darkCyan
+                           << Qt::darkMagenta
+                           << Qt::darkYellow;
+
+                    p.save();
+                    QFont f;
+                    f.setPixelSize(12);
+                    p.setFont(f);
+
+                    for (QVector<QRect>::const_iterator it = d.rects.begin(); it != d.rects.end(); ++it) {
+                        QRect rr = *it;
+                        rr.translate(r.topLeft());
+                        QColor color = colors.at(idx++ % colors.size());
+                        color.setAlpha(128);
+
+                        p.fillRect(rr, color);
+                        if (rr.y() >= 14) {
+                            p.drawText(rr.x() + 1, rr.y() - 2, QString::number(it->x()) + "," + QString::number(it->y()) + "+" + QString::number(it->width()) + "x" + QString::number(it->height()));
+                        }
+                    }
+                    p.restore();
+                }
+
                 if (test(DisplayThumbnails) && d.data.size() > 1) {
                     const int thumbWidth = qMin(pixmapSize.width(), qMax(d.thumbMinWidth, r.left() - 2));
                     // qDebug() << pixmapSize << thumbWidth << r;
@@ -1031,6 +1075,7 @@ void Window::updateImages()
         }
     }
 }
+
 
 void Window::showEvent(QShowEvent *e)
 {
@@ -1258,10 +1303,10 @@ static inline bool compareDataNaturally(const Data *left, const Data *right)
 static inline bool compareDataBySize(const Data *left, const Data *right)
 {
     static QHash<const Data*, qint64> size;
-#define FIND_SIZE(arg)                                  \
-    qint64 &size_ ## arg = size[arg];                   \
-    if (size_ ## arg == 0) {                            \
-        size_ ## arg = QFileInfo(arg->path).size();     \
+#define FIND_SIZE(arg)                              \
+    qint64 &size_ ## arg = size[arg];               \
+    if (size_ ## arg == 0) {                        \
+        size_ ## arg = QFileInfo(arg->path).size(); \
     }
 
     FIND_SIZE(left);
@@ -1273,10 +1318,10 @@ static inline bool compareDataBySize(const Data *left, const Data *right)
 static inline bool compareDataByCreationDate(const Data *left, const Data *right)
 {
     static QHash<const Data*, uint> date;
-#define FIND_DATE(arg)                                                  \
-    uint &date_ ## arg = date[arg];                                     \
-    if (date_ ## arg == 0) {                                            \
-        date_ ## arg = QFileInfo(arg->path).created().toTime_t();       \
+#define FIND_DATE(arg)                                              \
+    uint &date_ ## arg = date[arg];                                 \
+    if (date_ ## arg == 0) {                                        \
+        date_ ## arg = QFileInfo(arg->path).created().toTime_t();   \
     }
 
     FIND_DATE(left);
@@ -1497,6 +1542,16 @@ void Window::startSearch()
     d.lineEdit->show();
     d.lineEdit->setFocus();
     d.lineEdit->selectAll();
+    d.search = true;
+}
+
+void Window::startRect()
+{
+    d.lineEdit->show();
+    d.lineEdit->setFocus();
+    d.lineEdit->selectAll();
+    d.search = false;
+    resetLineEditStyleSheet();
 }
 
 void Window::toggleCursorVisible()
@@ -1677,7 +1732,7 @@ void Window::keyPressEvent(QKeyEvent *e)
         if (e->modifiers() == Qt::ShiftModifier) {
             toggleAutoZoom();
         } else if (d.data.size() > 1) {
-            if (e->modifiers() == Qt::ControlModifier && !d.lineEdit->text().isEmpty()) {
+            if (e->modifiers() == Qt::ControlModifier && d.search && !d.lineEdit->text().isEmpty()) {
                 int count = rand() % (d.data.size() / 10);
                 while (count--)
                     searchNext();
@@ -1691,6 +1746,8 @@ void Window::keyPressEvent(QKeyEvent *e)
     case Qt::Key_R:
         if (e->modifiers() & Qt::AltModifier) {
             addDirectoryRecursively();
+        } else if (e->modifiers() & Qt::ShiftModifier) {
+            startRect();
         } else {
             showNormal();
         }
@@ -2091,6 +2148,8 @@ int Window::lastIndexOf(const QString &string, int index) const
 
 bool Window::searchNext()
 {
+    if (!d.search)
+        return false;
     const QString text = d.lineEdit->text();
     if (text.isEmpty())
         return false;
@@ -2106,6 +2165,8 @@ bool Window::searchNext()
 
 bool Window::searchPrevious()
 {
+    if (!d.search)
+        return false;
     const QString text = d.lineEdit->text();
     if (text.isEmpty())
         return false;
@@ -2121,13 +2182,32 @@ bool Window::searchPrevious()
 
 void Window::onLineEditReturnPressed()
 {
-    const int old = d.current;
-    searchNext();
-    if (old != d.current) {
-        d.lineEdit->hide();
+    if (d.search) {
+        const int old = d.current;
+        searchNext();
+        if (old != d.current) {
+            d.lineEdit->hide();
+        } else {
+            d.lineEdit->setStyleSheet("background: red");
+            QTimer::singleShot(1000, this, SLOT(resetLineEditStyleSheet()));
+        }
     } else {
-        d.lineEdit->setStyleSheet("background: red");
-        QTimer::singleShot(1000, this, SLOT(resetLineEditStyleSheet()));
+        const QStringList splits = d.lineEdit->text().split(";", QString::SkipEmptyParts);
+        bool ok = false;
+        for (int i=0; i<splits.size(); ++i) {
+            QRegExp rx(" *([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+) *");
+            if (!rx.exactMatch(splits.at(i))) {
+                qDebug() << "Can't parse rect" << d.lineEdit->text();
+            } else {
+                ok = true;
+                QRect r(rx.cap(1).toInt(), rx.cap(2).toInt(), rx.cap(3).toInt(), rx.cap(4).toInt());
+                d.rects.append(r);
+            }
+        }
+        if (ok) {
+            viewport()->update();
+            d.lineEdit->hide();
+        }
     }
 }
 

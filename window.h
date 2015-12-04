@@ -84,6 +84,7 @@ public slots:
     void toggleShowThumbnails();
     void toggleShowFileName();
     void startSearch();
+    void startRect();
     void toggleCursorVisible();
     void showInfo();
     void copyPath() const;
@@ -172,6 +173,7 @@ private:
         QBasicTimer updateFontSizeTimer, quitTimer, updateImagesTimer, slideShowTimer,
             indexBufferTimer, updateScrollBarsTimer, indexBufferClearTimer;
         QLineEdit *lineEdit;
+        bool search;
         int maxThreads;
         int minSize, maxSize;
         double quitTimerMinutes;
@@ -180,6 +182,7 @@ private:
         ImageLoaderThread imageLoaderThread;
         QPoint pressPosition;
         bool midButtonPressed;
+        QVector<QRect> rects;
     } d;
 };
 
