@@ -6,7 +6,7 @@
 #include "flags.h"
 
 struct Data {
-    Data() : rotation(0), flags(0) {}
+    Data() : movie(0), rotation(0), flags(0) {}
 
     QString path;
     QImage image;
