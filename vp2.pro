@@ -3,7 +3,7 @@
 ######################################################################
 
 TEMPLATE = app
-TARGET =
+TARGET = vp2
 DEPENDPATH += .
 INCLUDEPATH += .
 mac {
