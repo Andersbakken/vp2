@@ -2,6 +2,9 @@
 #define WINDOW_H
 #include <QtGui>
 #include <QtNetwork>
+#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
+#include <QtWidgets>
+#endif
 #include "threads.h"
 #include "flags.h"
 

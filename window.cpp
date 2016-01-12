@@ -2258,7 +2258,7 @@ inline QDebug operator<<(QDebug debug, const QLinkedList<T> &list)
 {
     debug.nospace() << "(";
     bool first = true;
-    for (Q_TYPENAME QLinkedList<T>::const_iterator i = list.begin(); i != list.end(); ++i) {
+    for (typename QLinkedList<T>::const_iterator i = list.begin(); i != list.end(); ++i) {
         if (!first) {
             debug << ", ";
         } else {
