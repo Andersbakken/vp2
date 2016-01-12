@@ -32,3 +32,4 @@ unix {
 CONFIG -= app_bundle
 #QMAKE_CXXFLAGS += -O2
 QT = core network gui
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
