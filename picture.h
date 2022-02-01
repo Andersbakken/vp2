@@ -22,6 +22,7 @@ public:
 private:
     struct Data {
         QImage image;
+        int rotation { 0 };
     } d;
 };
 
