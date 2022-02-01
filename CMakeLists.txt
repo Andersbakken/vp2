@@ -1,0 +1,8 @@
+project(vp2)
+cmake_minimum_required(VERSION 2.8)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+find_package(Qt5 COMPONENTS Widgets Network REQUIRED)
+add_executable(vp2 flags.h main.cpp picture.cpp picture.h threads.cpp threads.h window.cpp window.h)
+target_link_libraries(vp2 Qt5::Widgets Qt5::Network)
