@@ -1729,8 +1729,10 @@ void Window::keyPressEvent(QKeyEvent *e)
         }
         break;
     case Qt::Key_Z:
-        if (e->modifiers() == Qt::ShiftModifier) {
+        if (e->modifiers() == Qt::ControlModifier) {
             toggleAutoZoom();
+        } else if (e->modifiers() & Qt::ShiftModifier) {
+            shuffle();
         } else if (d.data.size() > 1) {
             if (e->modifiers() == Qt::ControlModifier && d.search && !d.lineEdit->text().isEmpty()) {
                 int count = rand() % (d.data.size() / 10);
@@ -2323,6 +2325,22 @@ void Window::onNetworkReplyFinished(QNetworkReply *reply)
     reply->deleteLater();
 }
 
+void Window::shuffle()
+{
+    if (d.data.isEmpty())
+        return;
+    Data *current = d.data.at(d.current);
+    d.current = -1;
+    d.loading.clear();
+    d.history.clear();
+    auto prev = std::move(d.data);
+    d.sort = Random;
+    for (Data *dt : prev) {
+        addNode(dt);
+    }
+    d.current = d.data.indexOf(current);
+    viewport()->update();
+}
 
 void Window::rotateLeft()
 {

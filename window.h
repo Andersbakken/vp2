@@ -72,6 +72,7 @@ public slots:
     //     void zoomNormal() { zoom(1); }
     //     void zoomIn();
     //     void zoomOut();
+    void shuffle();
     void rotateLeft();
     void rotateRight();
     void ensurePointerHidden();
