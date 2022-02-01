@@ -149,7 +149,7 @@ private:
         QSet<Data*> toDelete;
         int current;
 
-        QLinkedList<int> history;
+        QList<int> history;
 
         double slideShowInterval;
         int maxImages;

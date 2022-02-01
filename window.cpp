@@ -94,7 +94,7 @@ Window::Window(const QStringList &args, QWidget *parent)
     if (!files.isEmpty()) {
         const QDateTime current = QDateTime::currentDateTime();
         foreach(const QFileInfo &fi, files) {
-            if (current.secsTo(fi.created()) >= 3600 * 24) {
+            if (current.secsTo(fi.birthTime()) >= 3600 * 24) {
                 QFile::remove(fi.absoluteFilePath());
                 qDebug() << "Actually removing" << fi.absoluteFilePath();
             }
@@ -808,7 +808,7 @@ void Window::wheelEvent(QWheelEvent *e)
     switch (e->modifiers()) {
     case Qt::NoModifier:
     case Qt::ShiftModifier:
-        if (e->delta() < 0) {
+        if (e->angleDelta().y() < 0) {
             moveCurrentIndexBy(e->modifiers() & Qt::ShiftModifier ? 10 : 1);
         } else {
             moveCurrentIndexBy(e->modifiers() & Qt::ShiftModifier ? -10 : -1);
@@ -1114,7 +1114,7 @@ void Window::timerEvent(QTimerEvent *e)
         QFont f;
         f.setPixelSize(30);
         const int w = viewport()->width();
-        while (QFontMetrics(f).width(d.longestPath) >= w && f.pixelSize() > 10) {
+        while (QFontMetrics(f).horizontalAdvance(d.longestPath) >= w && f.pixelSize() > 10) {
             f.setPixelSize(f.pixelSize() - 1);
         }
         if (d.fontSize != f.pixelSize()) {
@@ -1321,7 +1321,7 @@ static inline bool compareDataByCreationDate(const Data *left, const Data *right
 #define FIND_DATE(arg)                                              \
     uint &date_ ## arg = date[arg];                                 \
     if (date_ ## arg == 0) {                                        \
-        date_ ## arg = QFileInfo(arg->path).created().toTime_t();   \
+        date_ ## arg = QFileInfo(arg->path).birthTime().toTime_t();   \
     }
 
     FIND_DATE(left);
@@ -1351,16 +1351,16 @@ void Window::addNode(Data *dt)
     if (!d.data.isEmpty()) {
         switch (d.sort) {
         case Natural:
-            it = qLowerBound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataNaturally);
+            it = std::lower_bound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataNaturally);
             break;
         case Alphabetically:
-            it = qLowerBound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataAlphabetically);
+            it = std::lower_bound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataAlphabetically);
             break;
         case Size:
-            it = qLowerBound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataBySize);
+            it = std::lower_bound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataBySize);
             break;
         case CreationDate:
-            it = qLowerBound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataByCreationDate);
+            it = std::lower_bound<DataIterator>(d.data.begin(), d.data.end(), dt, compareDataByCreationDate);
             break;
         case Random:
             it = d.data.begin() + (rand() % d.data.size());
@@ -1584,7 +1584,7 @@ void Window::showInfo()
         if (!d.data.at(i)->image.isNull())
             it->setData(2, Qt::DecorationRole, d.data.at(i)->image.scaled(40, 40));
         if (i == d.current) {
-            tw->setItemSelected(it, true);
+            it->setSelected(true);
             tw->scrollToItem(it);
         }
     }
@@ -2192,7 +2192,7 @@ void Window::onLineEditReturnPressed()
             QTimer::singleShot(1000, this, SLOT(resetLineEditStyleSheet()));
         }
     } else {
-        const QStringList splits = d.lineEdit->text().split(";", QString::SkipEmptyParts);
+        const QStringList splits = d.lineEdit->text().split(";", Qt::SkipEmptyParts);
         bool ok = false;
         for (int i=0; i<splits.size(); ++i) {
             QRegExp rx(" *([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+) *");
@@ -2368,7 +2368,7 @@ void Window::modifyIndexes(int index, int added)
             it.value() += added;
         }
     }
-    for (QLinkedList<int>::iterator i = d.history.begin(); i != d.history.end(); ++i) {
+    for (auto i = d.history.begin(); i != d.history.end(); ++i) {
         if (*i >= index)
             (*i) += added;
     }
