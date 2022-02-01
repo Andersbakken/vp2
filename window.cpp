@@ -2256,11 +2256,11 @@ void Window::ensurePointerHidden()
 }
 
 template <class T>
-inline QDebug operator<<(QDebug debug, const QLinkedList<T> &list)
+inline QDebug operator<<(QDebug debug, const std::list<T> &list)
 {
     debug.nospace() << "(";
     bool first = true;
-    for (typename QLinkedList<T>::const_iterator i = list.begin(); i != list.end(); ++i) {
+    for (typename std::list<T>::const_iterator i = list.begin(); i != list.end(); ++i) {
         if (!first) {
             debug << ", ";
         } else {
