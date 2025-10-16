@@ -185,7 +185,7 @@ void Window::mousePressEvent(QMouseEvent *e)
         }
         e->accept();
     } else {
-        if (e->button() == Qt::MidButton) {
+        if (e->button() == Qt::MiddleButton) {
             d.midButtonPressed = true;
             d.pressPosition = e->pos();
             viewport()->update();
