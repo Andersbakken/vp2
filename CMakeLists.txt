@@ -1,5 +1,5 @@
+cmake_minimum_required(VERSION 3.2...3.31)
 project(vp2)
-cmake_minimum_required(VERSION 3.2)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
