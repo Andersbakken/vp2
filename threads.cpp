@@ -132,6 +132,7 @@ void ImageLoaderThread::run()
         } else
 #endif
         {
+            node->reader->setAutoTransform(true);
             QSize size;
             if (!node->size.isEmpty()) {
                 size = node->reader->size();
