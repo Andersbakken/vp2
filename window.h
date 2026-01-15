@@ -16,6 +16,12 @@ struct Data {
     QMovie *movie;
     int rotation;
 
+    QImage currentImage() const {
+        if (movie)
+            return movie->currentImage();
+        return image;
+    }
+
     bool clear() {
         if (!image.isNull()) {
             image = QImage();
@@ -109,6 +115,7 @@ public slots:
     void onImageLoadError(void *);
     void onImageLoaded(void *, const QImage &image);
     void onThumbLoaded(const QImage &thumb);
+    void onMovieFrameChanged();
     void debug();
     void onThumbThreadFinished();
 
