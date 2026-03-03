@@ -2369,13 +2369,12 @@ void Window::shuffle()
     if (d.data.isEmpty())
         return;
     Data *current = d.data.at(d.current);
-    d.current = -1;
     d.loading.clear();
     d.history.clear();
-    auto prev = std::move(d.data);
     d.sort = Random;
-    for (Data *dt : prev) {
-        addNode(dt);
+    for (int i = d.data.size() - 1; i > 0; --i) {
+        const int j = rand() % (i + 1);
+        std::swap(d.data[i], d.data[j]);
     }
     d.current = d.data.indexOf(current);
     d.thumbLeft = d.thumbRight = ThumbInfo();
