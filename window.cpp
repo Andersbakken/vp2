@@ -2378,6 +2378,7 @@ void Window::shuffle()
         addNode(dt);
     }
     d.current = d.data.indexOf(current);
+    d.thumbLeft = d.thumbRight = ThumbInfo();
     viewport()->update();
 }
 
