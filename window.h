@@ -80,6 +80,25 @@ public slots:
     //     void zoomIn();
     //     void zoomOut();
     void shuffle();
+    void shufflePrev();
+    void shuffleCenter();
+    void shuffleNext();
+    void cyclePrevForward();
+    void cyclePrevBackward();
+    void cycleCenterForward();
+    void cycleCenterBackward();
+    void cycleNextForward();
+    void cycleNextBackward();
+    void randomImage();
+    void randomSearchNext();
+    void cyclePenColor();
+    void slideshowFaster();
+    void slideshowSlower();
+    void printPath();
+    void toggleFullScreen();
+    void showMaximizedSlot();
+    void showNormalSlot();
+    void quitSlot();
     void rotateLeft();
     void rotateRight();
     void ensurePointerHidden();
@@ -152,7 +171,87 @@ private:
         int requestedWidth;
     };
 
+    struct Actions {
+        // Navigation
+        QAction *nextImage;
+        QAction *previousImage;
+        QAction *nextPage;
+        QAction *previousPage;
+        QAction *home;
+        QAction *end;
+        QAction *back;
+        QAction *forward;
+        QAction *nextDirectory;
+        QAction *previousDirectory;
+
+        // Shuffle / random
+        QAction *shuffleAll;
+        QAction *shufflePrev;
+        QAction *shuffleCenter;
+        QAction *shuffleNext;
+        QAction *cyclePrevForward;
+        QAction *cyclePrevBackward;
+        QAction *cycleCenterForward;
+        QAction *cycleCenterBackward;
+        QAction *cycleNextForward;
+        QAction *cycleNextBackward;
+        QAction *randomImage;
+
+        // Rotate / delete
+        QAction *rotateLeft;
+        QAction *rotateRight;
+        QAction *toggleRemove;
+        QAction *undelete;
+        QAction *purge;
+
+        // Search
+        QAction *startSearch;
+        QAction *searchNext;
+        QAction *searchPrevious;
+        QAction *randomSearchNext;
+
+        // View toggles
+        QAction *toggleAutoZoom;
+        QAction *toggleShowFileName;
+        QAction *toggleShowThumbnails;
+        QAction *toggleCursor;
+        QAction *toggleSlideShow;
+        QAction *cyclePenColor;
+
+        // Info / utility
+        QAction *showInfo;
+        QAction *copyPath;
+        QAction *printPath;
+        QAction *startRect;
+        QAction *about;
+
+        // File
+        QAction *addImages;
+        QAction *addDirectory;
+        QAction *addDirectoryRecursively;
+
+        // Slideshow tuning
+        QAction *slideshowFaster;
+        QAction *slideshowSlower;
+
+        // Window state
+        QAction *showNormal;
+        QAction *showMaximized;
+        QAction *showFullScreen;
+        QAction *toggleFullScreen;
+
+        // Quit
+        QAction *quit;
+    };
+
+    void createActions();
+    void refreshActionLabels();
+
+    void resetCycleCursors();
+
     struct {
+        Actions act;
+        int cycleCursor[3];
         QHash<Data*, int> loading;
 
         QList<Data*> data;

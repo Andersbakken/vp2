@@ -57,6 +57,7 @@ Window::Window(const QStringList &args, QWidget *parent)
     : QAbstractScrollArea(parent), Flags(FirstImage|DisplayThumbnails)
 {
     d.current = -1;
+    resetCycleCursors();
     d.slideShowInterval = 3;
     d.maxImages = 30;
     d.penColor = Qt::yellow;
@@ -88,6 +89,7 @@ Window::Window(const QStringList &args, QWidget *parent)
     set(AutoZoomEnabled, QSettings().value("autoZoom", true).toBool());
 
     setBackgroundColor(QSettings().value("bgcol", "grid").toString().toLower());
+    createActions();
     parseArgs(args);
 
     const QList<QFileInfo> files = backupDir().entryInfoList(QDir::Files|QDir::NoDotAndDotDot);
@@ -105,6 +107,248 @@ Window::Window(const QStringList &args, QWidget *parent)
     connect(&d.imageLoaderThread, SIGNAL(loadError(void*)),
             this, SLOT(onImageLoadError(void *)));
     d.imageLoaderThread.start();
+}
+
+namespace {
+QAction *makeAction(QWidget *parent, const QString &text,
+                    const QList<QKeySequence> &shortcuts)
+{
+    QAction *a = new QAction(text, parent);
+    a->setShortcuts(shortcuts);
+    a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    parent->addAction(a);
+    return a;
+}
+
+QAction *makeAction(QWidget *parent, const QString &text,
+                    const QKeySequence &shortcut)
+{
+    return makeAction(parent, text, QList<QKeySequence>() << shortcut);
+}
+
+QAction *makeAction(QWidget *parent, const QString &text)
+{
+    return makeAction(parent, text, QList<QKeySequence>());
+}
+}
+
+void Window::createActions()
+{
+    Actions &a = d.act;
+
+    a.nextImage = makeAction(this, tr("Next image"),
+                             QList<QKeySequence>()
+                             << QKeySequence(Qt::Key_Space)
+                             << QKeySequence(Qt::Key_Right)
+                             << QKeySequence(Qt::Key_Down));
+    connect(a.nextImage, SIGNAL(triggered()), this, SLOT(nextImage()));
+
+    a.previousImage = makeAction(this, tr("Previous image"),
+                                 QList<QKeySequence>()
+                                 << QKeySequence(Qt::SHIFT | Qt::Key_Space)
+                                 << QKeySequence(Qt::Key_Left)
+                                 << QKeySequence(Qt::Key_Up));
+    connect(a.previousImage, SIGNAL(triggered()), this, SLOT(previousImage()));
+
+    a.nextPage = makeAction(this, tr("Next image (+10)"),
+                            QList<QKeySequence>()
+                            << QKeySequence(Qt::Key_Greater)
+                            << QKeySequence(Qt::CTRL | Qt::Key_Right)
+                            << QKeySequence(Qt::CTRL | Qt::Key_Down));
+    connect(a.nextPage, SIGNAL(triggered()), this, SLOT(nextPage()));
+
+    a.previousPage = makeAction(this, tr("Previous image (-10)"),
+                                QList<QKeySequence>()
+                                << QKeySequence(Qt::Key_Less)
+                                << QKeySequence(Qt::CTRL | Qt::Key_Left)
+                                << QKeySequence(Qt::CTRL | Qt::Key_Up));
+    connect(a.previousPage, SIGNAL(triggered()), this, SLOT(previousPage()));
+
+    a.home = makeAction(this, tr("First image"), QKeySequence(Qt::Key_Home));
+    connect(a.home, SIGNAL(triggered()), this, SLOT(home()));
+
+    a.end = makeAction(this, tr("Last image"), QKeySequence(Qt::Key_End));
+    connect(a.end, SIGNAL(triggered()), this, SLOT(end()));
+
+    a.back = makeAction(this, tr("Back"), QKeySequence(Qt::ALT | Qt::Key_Left));
+    connect(a.back, SIGNAL(triggered()), this, SLOT(back()));
+
+    a.forward = makeAction(this, tr("Forward"), QKeySequence(Qt::ALT | Qt::Key_Right));
+    connect(a.forward, SIGNAL(triggered()), this, SLOT(forward()));
+
+    a.nextDirectory = makeAction(this, tr("Next directory"),
+                                 QList<QKeySequence>()
+                                 << QKeySequence(Qt::CTRL | Qt::Key_Space)
+                                 << QKeySequence(Qt::ALT | Qt::Key_Space));
+    connect(a.nextDirectory, &QAction::triggered, this, [this]() { nextDirectory(1); });
+
+    a.previousDirectory = makeAction(this, tr("Previous directory"),
+                                     QList<QKeySequence>()
+                                     << QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Space)
+                                     << QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Space));
+    connect(a.previousDirectory, &QAction::triggered, this, [this]() { nextDirectory(-1); });
+
+    a.shuffleAll = makeAction(this, tr("Shuffle all"),
+                              QKeySequence(Qt::SHIFT | Qt::Key_Z));
+    connect(a.shuffleAll, SIGNAL(triggered()), this, SLOT(shuffle()));
+
+    a.shufflePrev = makeAction(this, tr("Shuffle previous image"),
+                               QKeySequence(Qt::SHIFT | Qt::Key_1));
+    connect(a.shufflePrev, SIGNAL(triggered()), this, SLOT(shufflePrev()));
+
+    a.shuffleCenter = makeAction(this, tr("Shuffle current image"),
+                                 QKeySequence(Qt::SHIFT | Qt::Key_2));
+    connect(a.shuffleCenter, SIGNAL(triggered()), this, SLOT(shuffleCenter()));
+
+    a.shuffleNext = makeAction(this, tr("Shuffle next image"),
+                               QKeySequence(Qt::SHIFT | Qt::Key_3));
+    connect(a.shuffleNext, SIGNAL(triggered()), this, SLOT(shuffleNext()));
+
+    a.cyclePrevForward = makeAction(this, tr("Cycle previous image forward"),
+                                    QKeySequence(Qt::CTRL | Qt::Key_1));
+    connect(a.cyclePrevForward, SIGNAL(triggered()), this, SLOT(cyclePrevForward()));
+
+    a.cyclePrevBackward = makeAction(this, tr("Cycle previous image backward"),
+                                     QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_1));
+    connect(a.cyclePrevBackward, SIGNAL(triggered()), this, SLOT(cyclePrevBackward()));
+
+    a.cycleCenterForward = makeAction(this, tr("Cycle current image forward"),
+                                      QKeySequence(Qt::CTRL | Qt::Key_2));
+    connect(a.cycleCenterForward, SIGNAL(triggered()), this, SLOT(cycleCenterForward()));
+
+    a.cycleCenterBackward = makeAction(this, tr("Cycle current image backward"),
+                                       QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_2));
+    connect(a.cycleCenterBackward, SIGNAL(triggered()), this, SLOT(cycleCenterBackward()));
+
+    a.cycleNextForward = makeAction(this, tr("Cycle next image forward"),
+                                    QKeySequence(Qt::CTRL | Qt::Key_3));
+    connect(a.cycleNextForward, SIGNAL(triggered()), this, SLOT(cycleNextForward()));
+
+    a.cycleNextBackward = makeAction(this, tr("Cycle next image backward"),
+                                     QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
+    connect(a.cycleNextBackward, SIGNAL(triggered()), this, SLOT(cycleNextBackward()));
+
+    a.randomImage = makeAction(this, tr("Random image"), QKeySequence(Qt::Key_Z));
+    connect(a.randomImage, SIGNAL(triggered()), this, SLOT(randomImage()));
+
+    a.rotateLeft = makeAction(this, tr("Rotate left"),
+                              QKeySequence(Qt::Key_BracketLeft));
+    connect(a.rotateLeft, SIGNAL(triggered()), this, SLOT(rotateLeft()));
+
+    a.rotateRight = makeAction(this, tr("Rotate right"),
+                               QKeySequence(Qt::Key_BracketRight));
+    connect(a.rotateRight, SIGNAL(triggered()), this, SLOT(rotateRight()));
+
+    a.toggleRemove = makeAction(this, tr("Delete image"),
+                                QList<QKeySequence>()
+                                << QKeySequence(Qt::Key_Delete)
+                                << QKeySequence(Qt::Key_Backspace)
+                                << QKeySequence(Qt::CTRL | Qt::Key_D));
+    connect(a.toggleRemove, SIGNAL(triggered()), this, SLOT(toggleRemoveCurrentImage()));
+
+    a.undelete = makeAction(this, tr("Undelete current image"),
+                            QKeySequence(Qt::CTRL | Qt::Key_U));
+    connect(a.undelete, SIGNAL(triggered()), this, SLOT(undeleteCurrentImage()));
+
+    a.purge = makeAction(this, tr("Purge removed images"));
+    connect(a.purge, SIGNAL(triggered()), this, SLOT(purge()));
+
+    a.startSearch = makeAction(this, tr("Search"), QKeySequence(Qt::Key_Slash));
+    connect(a.startSearch, SIGNAL(triggered()), this, SLOT(startSearch()));
+
+    a.searchNext = makeAction(this, tr("Find next"), QKeySequence(Qt::Key_N));
+    connect(a.searchNext, SIGNAL(triggered()), this, SLOT(searchNext()));
+
+    a.searchPrevious = makeAction(this, tr("Find previous"),
+                                  QList<QKeySequence>()
+                                  << QKeySequence(Qt::SHIFT | Qt::Key_N)
+                                  << QKeySequence(Qt::Key_P));
+    connect(a.searchPrevious, SIGNAL(triggered()), this, SLOT(searchPrevious()));
+
+    a.randomSearchNext = makeAction(this, tr("Random search next"),
+                                    QKeySequence(Qt::CTRL | Qt::Key_Z));
+    connect(a.randomSearchNext, SIGNAL(triggered()), this, SLOT(randomSearchNext()));
+
+    a.toggleAutoZoom = makeAction(this, tr("Toggle autozoom"));
+    connect(a.toggleAutoZoom, SIGNAL(triggered()), this, SLOT(toggleAutoZoom()));
+
+    a.toggleShowFileName = makeAction(this, tr("Show file name"),
+                                      QKeySequence(Qt::Key_T));
+    connect(a.toggleShowFileName, SIGNAL(triggered()), this, SLOT(toggleShowFileName()));
+
+    a.toggleShowThumbnails = makeAction(this, tr("Show thumbnails"),
+                                        QKeySequence(Qt::Key_H));
+    connect(a.toggleShowThumbnails, SIGNAL(triggered()), this, SLOT(toggleShowThumbnails()));
+
+    a.toggleCursor = makeAction(this, tr("Hide cursor"), QKeySequence(Qt::Key_C));
+    connect(a.toggleCursor, SIGNAL(triggered()), this, SLOT(toggleCursorVisible()));
+
+    a.toggleSlideShow = makeAction(this, tr("Start slideshow"),
+                                   QKeySequence(Qt::Key_S));
+    connect(a.toggleSlideShow, SIGNAL(triggered()), this, SLOT(toggleSlideShow()));
+
+    a.cyclePenColor = makeAction(this, tr("Cycle pen color"),
+                                 QKeySequence(Qt::SHIFT | Qt::Key_T));
+    connect(a.cyclePenColor, SIGNAL(triggered()), this, SLOT(cyclePenColor()));
+
+    a.showInfo = makeAction(this, tr("Show info"),
+                            QKeySequence(Qt::CTRL | Qt::Key_I));
+    connect(a.showInfo, SIGNAL(triggered()), this, SLOT(showInfo()));
+
+    a.copyPath = makeAction(this, tr("Copy path"),
+                            QKeySequence(Qt::CTRL | Qt::Key_C));
+    connect(a.copyPath, SIGNAL(triggered()), this, SLOT(copyPath()));
+
+    a.printPath = makeAction(this, tr("Print path to stdout"),
+                             QKeySequence(Qt::SHIFT | Qt::Key_F));
+    connect(a.printPath, SIGNAL(triggered()), this, SLOT(printPath()));
+
+    a.startRect = makeAction(this, tr("Draw rectangle"),
+                             QKeySequence(Qt::SHIFT | Qt::Key_R));
+    connect(a.startRect, SIGNAL(triggered()), this, SLOT(startRect()));
+
+    a.about = makeAction(this, tr("About vp2"));
+    connect(a.about, SIGNAL(triggered()), this, SLOT(about()));
+
+    a.addImages = makeAction(this, tr("Add files..."),
+                             QList<QKeySequence>()
+                             << QKeySequence(Qt::Key_O)
+                             << QKeySequence(Qt::Key_L));
+    connect(a.addImages, SIGNAL(triggered()), this, SLOT(addImages()));
+
+    a.addDirectory = makeAction(this, tr("Add directory..."), QKeySequence(Qt::Key_D));
+    connect(a.addDirectory, SIGNAL(triggered()), this, SLOT(addDirectory()));
+
+    a.addDirectoryRecursively = makeAction(this, tr("Add directory recursively..."),
+                                           QKeySequence(Qt::ALT | Qt::Key_R));
+    connect(a.addDirectoryRecursively, SIGNAL(triggered()),
+            this, SLOT(addDirectoryRecursively()));
+
+    a.slideshowFaster = makeAction(this, tr("Slideshow faster"),
+                                   QList<QKeySequence>()
+                                   << QKeySequence(Qt::Key_Plus)
+                                   << QKeySequence(Qt::SHIFT | Qt::Key_Equal));
+    connect(a.slideshowFaster, SIGNAL(triggered()), this, SLOT(slideshowFaster()));
+
+    a.slideshowSlower = makeAction(this, tr("Slideshow slower"),
+                                   QKeySequence(Qt::Key_Minus));
+    connect(a.slideshowSlower, SIGNAL(triggered()), this, SLOT(slideshowSlower()));
+
+    a.showNormal = makeAction(this, tr("Show normal"), QKeySequence(Qt::Key_R));
+    connect(a.showNormal, SIGNAL(triggered()), this, SLOT(showNormalSlot()));
+
+    a.showMaximized = makeAction(this, tr("Show maximized"), QKeySequence(Qt::Key_X));
+    connect(a.showMaximized, SIGNAL(triggered()), this, SLOT(showMaximizedSlot()));
+
+    a.showFullScreen = makeAction(this, tr("Show full screen"));
+    connect(a.showFullScreen, &QAction::triggered, this, [this]() { showFullScreen(); });
+
+    a.toggleFullScreen = makeAction(this, tr("Toggle full screen"),
+                                    QKeySequence(Qt::Key_F));
+    connect(a.toggleFullScreen, SIGNAL(triggered()), this, SLOT(toggleFullScreen()));
+
+    a.quit = makeAction(this, tr("Quit"), QKeySequence(Qt::Key_Q));
+    connect(a.quit, SIGNAL(triggered()), this, SLOT(quitSlot()));
 }
 
 Window::~Window()
@@ -202,122 +446,153 @@ void Window::mouseReleaseEvent(QMouseEvent *)
     }
 }
 
+void Window::refreshActionLabels()
+{
+    const Actions &a = d.act;
+    a.toggleShowFileName->setText(test(DisplayFileName)
+                                  ? tr("Hide file name") : tr("Show file name"));
+    a.toggleShowThumbnails->setText(test(DisplayThumbnails)
+                                    ? tr("Hide thumbnails") : tr("Show thumbnails"));
+    a.toggleCursor->setText(test(HidePointer)
+                            ? tr("Show cursor") : tr("Hide cursor"));
+    a.toggleAutoZoom->setText(test(AutoZoomEnabled)
+                              ? tr("Turn off autozoom") : tr("Turn on autozoom"));
+    a.toggleSlideShow->setText(d.slideShowTimer.isActive()
+                               ? tr("Stop slideshow") : tr("Start slideshow"));
+
+    const bool haveCurrent = !d.data.isEmpty() && d.current != -1;
+    const bool isRemoved = haveCurrent && d.toDelete.contains(d.data.at(d.current));
+    a.toggleRemove->setText(isRemoved ? tr("Undelete image") : tr("Delete image"));
+    a.toggleRemove->setEnabled(haveCurrent);
+    a.undelete->setEnabled(haveCurrent && isRemoved);
+    a.purge->setEnabled(!d.toDelete.isEmpty());
+    a.copyPath->setEnabled(haveCurrent);
+    a.printPath->setEnabled(haveCurrent);
+    a.rotateLeft->setEnabled(haveCurrent);
+    a.rotateRight->setEnabled(haveCurrent);
+    a.startRect->setEnabled(haveCurrent);
+    a.showInfo->setEnabled(!d.data.isEmpty());
+
+    const bool multi = d.data.size() > 1;
+    a.nextImage->setEnabled(multi);
+    a.previousImage->setEnabled(multi);
+    a.nextPage->setEnabled(multi);
+    a.previousPage->setEnabled(multi);
+    a.home->setEnabled(multi);
+    a.end->setEnabled(multi);
+    a.shuffleAll->setEnabled(multi);
+    a.randomImage->setEnabled(multi);
+    const bool fourPlus = d.data.size() >= 4;
+    a.shufflePrev->setEnabled(fourPlus);
+    a.shuffleCenter->setEnabled(fourPlus);
+    a.shuffleNext->setEnabled(fourPlus);
+    a.cyclePrevForward->setEnabled(fourPlus);
+    a.cyclePrevBackward->setEnabled(fourPlus);
+    a.cycleCenterForward->setEnabled(fourPlus);
+    a.cycleCenterBackward->setEnabled(fourPlus);
+    a.cycleNextForward->setEnabled(fourPlus);
+    a.cycleNextBackward->setEnabled(fourPlus);
+    a.nextDirectory->setEnabled(multi);
+    a.previousDirectory->setEnabled(multi);
+    a.back->setEnabled(!d.history.isEmpty());
+    a.forward->setEnabled(!d.history.isEmpty());
+
+    const Qt::WindowStates ws = windowState();
+    a.showNormal->setEnabled(ws & (Qt::WindowFullScreen | Qt::WindowMaximized));
+    a.showMaximized->setEnabled(!(ws & Qt::WindowMaximized));
+    a.showFullScreen->setEnabled(!(ws & Qt::WindowFullScreen));
+}
+
 void Window::contextMenuEvent(QContextMenuEvent *e)
 {
+    refreshActionLabels();
+
     QMenu menu(this);
-    const QAction *addFiles = menu.addAction(tr("&Add files"));
-    const QAction *addDirs = menu.addAction(tr("Add &directory"));
-    const QAction *addDirsRecursively = menu.addAction(tr("Add directory (&recursively)"));
-    const QAction *displayFileNameAct = menu.addAction(test(DisplayFileName)
-                                                       ? tr("Hide &file name")
-                                                       : tr("Display &file name"));
-    const QAction *displayThumbnails = menu.addAction(test(DisplayThumbnails)
-                                                      ? tr("Hide t&humbnail")
-                                                      : tr("Display t&humbnail"));
+    const Actions &a = d.act;
 
-    const QAction *hidePointerAction = menu.addAction(test(HidePointer)
-                                                      ? tr("Display &cursor")
-                                                      : tr("Hide &cursor"));
+    menu.addAction(a.nextImage);
+    menu.addAction(a.previousImage);
+    menu.addAction(a.home);
+    menu.addAction(a.end);
+    menu.addAction(a.back);
+    menu.addAction(a.forward);
+    menu.addAction(a.nextDirectory);
+    menu.addAction(a.previousDirectory);
+    menu.addSeparator();
 
+    menu.addAction(a.shuffleAll);
+    menu.addAction(a.shufflePrev);
+    menu.addAction(a.shuffleCenter);
+    menu.addAction(a.shuffleNext);
+    menu.addAction(a.cyclePrevForward);
+    menu.addAction(a.cyclePrevBackward);
+    menu.addAction(a.cycleCenterForward);
+    menu.addAction(a.cycleCenterBackward);
+    menu.addAction(a.cycleNextForward);
+    menu.addAction(a.cycleNextBackward);
+    menu.addAction(a.randomImage);
     menu.addSeparator();
-    QAction *doToggleRemoveImage = 0;
-    QAction *doPurge = 0;
-    if (!d.data.isEmpty()) {
-        if (d.toDelete.contains(d.data.at(d.current))) {
-            doToggleRemoveImage = menu.addAction(tr("Undelete image"));
-        } else {
-            doToggleRemoveImage = menu.addAction(tr("Delete image"));
-        }
-        if (!d.toDelete.isEmpty()) {
-            doPurge = menu.addAction(tr("Purge removed images"));
-        }
-    }
+
+    menu.addAction(a.rotateLeft);
+    menu.addAction(a.rotateRight);
+    menu.addAction(a.toggleRemove);
+    menu.addAction(a.purge);
     menu.addSeparator();
-    QAction *doShowNormal = menu.addAction(tr("Show &normal"));
-    QAction *doShowFullScreen = menu.addAction(tr("Show f&ull screen"));
-    QAction *doShowMaxized = menu.addAction(tr("Show &maximized"));
-    QAction *slideAct = menu.addAction(d.slideShowTimer.isActive()
-                                       ? tr("&Stop slideshow")
-                                       : tr("&Start slideshow"));
-    QAction *autoZoomAct = menu.addAction(test(AutoZoomEnabled)
-                                          ? tr("&Turn off autozoom")
-                                          : tr("&Turn on autozoom"));
+
+    menu.addAction(a.startSearch);
+    menu.addAction(a.searchNext);
+    menu.addAction(a.searchPrevious);
     menu.addSeparator();
-    QMenu *colorMenu = menu.addMenu(tr("Background color"));
-    colorMenu->addAction(tr("Grid"))->setData("yellow|black");
-    colorMenu->addAction(tr("Black"))->setData("green|yellow");
-    colorMenu->addAction(tr("Red"))->setData("black|yellow");
-    colorMenu->addAction(tr("Green"))->setData("black|yellow");
-    colorMenu->addAction(tr("Blue"))->setData("yellow|black");
-    colorMenu->addAction(tr("Yellow"))->setData("black|yellow");
-    colorMenu->addAction(tr("Gray"))->setData("yellow|black");
-    if (windowState() & Qt::WindowFullScreen) {
-        doShowFullScreen->setEnabled(false);
-    } else if (windowState() & Qt::WindowMaximized) {
-        doShowMaxized->setEnabled(false);
+
+    menu.addAction(a.toggleShowFileName);
+    menu.addAction(a.toggleShowThumbnails);
+    menu.addAction(a.toggleCursor);
+    menu.addAction(a.toggleAutoZoom);
+    menu.addAction(a.toggleSlideShow);
+    menu.addAction(a.cyclePenColor);
+    menu.addSeparator();
+
+    menu.addAction(a.copyPath);
+    if (!d.data.isEmpty() && d.current != -1) {
+        a.copyPath->setText(tr("Copy path: '%1'").arg(d.data.at(d.current)->path));
     } else {
-        doShowNormal->setEnabled(false);
+        a.copyPath->setText(tr("Copy path"));
     }
+    menu.addAction(a.printPath);
+    menu.addAction(a.showInfo);
+    menu.addAction(a.startRect);
     menu.addSeparator();
-    QAction *copy = d.data.isEmpty() ? 0 : menu.addAction(tr("&Copy: '%1'").
-                                                          arg(d.data.at(d.current)->path));
-    menu.addAction("About vp2", this, SLOT(about()));
-    menu.addSeparator();
-    const QAction *quit = menu.addAction(tr("&Quit"));
-    QAction *ret = menu.exec(e->globalPos());
-    if (!ret)
-        return;
-    if (ret == hidePointerAction) {
-        toggle(HidePointer);
-        QSettings().setValue("hidePointer", test(HidePointer));
-        viewport()->setCursor(QCursor(test(HidePointer) ? Qt::BlankCursor : Qt::ArrowCursor));
-    } else if (ret == addFiles) {
-        addImages();
-    } else if (ret == addDirs) {
-        addDirectory();
-    } else if (ret == addDirsRecursively) {
-        addDirectoryRecursively();
-    } else if (ret == displayFileNameAct) {
-        toggle(DisplayFileName);
-        QSettings().setValue("displayFileName", test(DisplayFileName));
-        viewport()->update(textArea());
-    } else if (ret == displayThumbnails) {
-        toggle(DisplayThumbnails);
-        QSettings().setValue("displayThumbnails", test(DisplayThumbnails));
-        viewport()->update(textArea());
-        updateAreas();
-    } else if (ret == doShowNormal) {
-        showNormal();
-    } else if (ret == doShowMaxized) {
-        showMaximized();
-    } else if (ret == doShowFullScreen) {
-        showFullScreen();
-    } else if (ret == copy) {
-        QClipboard *clip = qApp->clipboard();
-        QString path = d.data.at(d.current)->path;
-        if (path.contains(' ')) {
-            // ### check for "
-            path.prepend('"');
-            path.append('"');
-        }
 
-        if (clip->supportsSelection()) {
-            clip->setText(path, QClipboard::Selection);
-        }
-        clip->setText(path, QClipboard::Clipboard);
-    } else if (ret == quit) {
-        close();
-    } else if (ret == slideAct) {
-        toggleSlideShow();
-    } else if (ret == autoZoomAct) {
-        toggleAutoZoom();
-    } else if (ret->parent() == colorMenu) {
-        QSettings().setValue("bgcol", ret->text().toLower());
-        setBackgroundColor(ret->text().toLower());
-    } else if (ret == doToggleRemoveImage) {
-        toggleRemoveCurrentImage();
-    } else if (ret == doPurge) {
-        purge();
+    menu.addAction(a.addImages);
+    menu.addAction(a.addDirectory);
+    menu.addAction(a.addDirectoryRecursively);
+    menu.addSeparator();
+
+    menu.addAction(a.slideshowFaster);
+    menu.addAction(a.slideshowSlower);
+    menu.addSeparator();
+
+    menu.addAction(a.showNormal);
+    menu.addAction(a.showMaximized);
+    menu.addAction(a.showFullScreen);
+    menu.addSeparator();
+
+    QMenu *colorMenu = menu.addMenu(tr("Background color"));
+    static const char *const colors[] = { "Grid", "Black", "Red", "Green", "Blue",
+                                          "Yellow", "Gray", 0 };
+    for (int i = 0; colors[i]; ++i) {
+        colorMenu->addAction(tr(colors[i]));
+    }
+
+    menu.addAction(a.about);
+    menu.addSeparator();
+    menu.addAction(a.quit);
+
+    QAction *ret = menu.exec(e->globalPos());
+    if (ret && ret->parent() == colorMenu) {
+        const QString name = ret->text().toLower();
+        QSettings().setValue("bgcol", name);
+        setBackgroundColor(name);
     }
 }
 
@@ -349,6 +624,7 @@ enum Type {
     IName,
     Ignore,
     IIgnore,
+    Exclude,
     Opacity,
     QuitTimer,
     AutoZoom,
@@ -370,6 +646,22 @@ enum Type {
 void Window::parseArgs(const QStringList &argsIn)
 {
     QStringList args = argsIn;
+    // Split --option=value into --option value so the main parser below
+    // can read the value as the following positional argument.
+    for (int i = 1; i < args.size(); ++i) {
+        const QString &arg = args.at(i);
+        if (!arg.startsWith("--")) {
+            continue;
+        }
+        const int eq = arg.indexOf('=');
+        if (eq <= 2) {
+            continue;
+        }
+        const QString opt = arg.left(eq);
+        const QString val = arg.mid(eq + 1);
+        args.replace(i, opt);
+        args.insert(i + 1, val);
+    }
     const QRegExp multi("^-[A-Za-z][A-Za-z]+$");
     for (int i=1; i<args.size(); ++i) {
         if (multi.exactMatch(args.at(i))) {
@@ -413,6 +705,7 @@ void Window::parseArgs(const QStringList &argsIn)
         { "-u", "--iname", ::IName, One, "Load only files matching arg in directories (case insensitive)" },
         { 0, "--ignore", ::Ignore, One, "Don't load files matching arg in directories (case sensitive)" },
         { 0, "--iignore", ::Ignore, One, "Don't load files matching arg in directories (case insensitive)" },
+        { 0, "--exclude", ::Exclude, One, "Exclude files matching arg (wildcard by default, or /regex/)" },
         //{ 0, "--maxdepth", ::MaxDepth, One, "Max recursion depth" },
         //{ 0, "--mindepth", ::MinDepth, One, "Min recursion depth" },
         { 0, "--opacity", ::Opacity, One, "Set opacity of window (in percentage)" },
@@ -655,6 +948,23 @@ void Window::parseArgs(const QStringList &argsIn)
                 }
                 break;
             }
+            case ::Exclude: {
+                const QString raw = args.at(++i);
+                // /pattern/ selects regex mode; anything else is wildcard.
+                // A lone "/" or "//" is treated as a wildcard of that literal.
+                if (raw.size() >= 2 && raw.startsWith('/') && raw.endsWith('/')) {
+                    d.ignoreRegexp.setPattern(raw.mid(1, raw.size() - 2));
+                    d.ignoreRegexp.setPatternSyntax(QRegExp::RegExp);
+                } else {
+                    d.ignoreRegexp.setPattern(raw);
+                    d.ignoreRegexp.setPatternSyntax(QRegExp::Wildcard);
+                }
+                d.ignoreRegexp.setCaseSensitivity(Qt::CaseSensitive);
+                if (!d.ignoreRegexp.isValid()) {
+                    errorMessage = QString("'%1' is not a valid pattern").arg(raw);
+                }
+                break;
+            }
             case ::Opacity: {
                 const int percentage = args.at(++i).toInt();
                 if (percentage <= 0 || percentage > 100) {
@@ -753,7 +1063,8 @@ void Window::parseArgs(const QStringList &argsIn)
 
         usage.append(errorMessage);
 
-        fprintf(stderr, "%s\n", qPrintable(usage));
+        FILE *stream = errorMessage.isEmpty() ? stdout : stderr;
+        fprintf(stream, "%s\n", qPrintable(usage));
         exit(errorMessage.isEmpty() ? 0 : 1);
         return;
     }
@@ -941,7 +1252,7 @@ void Window::paintEvent(QPaintEvent *e)
                 }
 
                 if (test(DisplayThumbnails) && d.data.size() > 1) {
-                    int thumbWidth = qMin(pixmapSize.width(), qMax(d.thumbMinWidth, r.left() - 2));
+                    int thumbWidth = qMax(d.thumbMinWidth, r.left() - 2);
                     ThumbInfo *thumbs[] = { &d.thumbLeft, &d.thumbRight };
                     // Cap thumb width so its scaled height cannot exceed the
                     // viewport height (prevents top/bottom clipping of tall thumbs).
@@ -1455,6 +1766,22 @@ void Window::toggleSlideShow()
     } else {
         d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
     }
+    // While the slideshow is running, Space should stop it rather than
+    // advance the current image. Move the Space shortcut between the two
+    // actions so the QAction system dispatches to the right slot.
+    if (d.act.toggleSlideShow && d.act.nextImage) {
+        QList<QKeySequence> nextShortcuts;
+        QList<QKeySequence> toggleShortcuts;
+        nextShortcuts << QKeySequence(Qt::Key_Right) << QKeySequence(Qt::Key_Down);
+        toggleShortcuts << QKeySequence(Qt::Key_S);
+        if (d.slideShowTimer.isActive()) {
+            toggleShortcuts << QKeySequence(Qt::Key_Space);
+        } else {
+            nextShortcuts << QKeySequence(Qt::Key_Space);
+        }
+        d.act.nextImage->setShortcuts(nextShortcuts);
+        d.act.toggleSlideShow->setShortcuts(toggleShortcuts);
+    }
 }
 
 void Window::toggleAutoZoom()
@@ -1631,7 +1958,9 @@ void Window::startRect()
 
 void Window::toggleCursorVisible()
 {
-    viewport()->setCursor(QCursor(toggle(HidePointer) ? Qt::BlankCursor : Qt::ArrowCursor));
+    const bool hide = toggle(HidePointer);
+    viewport()->setCursor(QCursor(hide ? Qt::BlankCursor : Qt::ArrowCursor));
+    QSettings().setValue("hidePointer", hide);
 }
 
 void Window::copyPath() const
@@ -1675,6 +2004,7 @@ void Window::showInfo()
 void Window::toggleShowThumbnails()
 {
     toggle(DisplayThumbnails);
+    QSettings().setValue("displayThumbnails", test(DisplayThumbnails));
     updateImages();
     updateAreas();
     viewport()->update();
@@ -1683,6 +2013,7 @@ void Window::toggleShowThumbnails()
 void Window::toggleShowFileName()
 {
     toggle(DisplayFileName);
+    QSettings().setValue("displayFileName", test(DisplayFileName));
     updateAreas();
     viewport()->update();
 }
@@ -1690,189 +2021,16 @@ void Window::toggleShowFileName()
 void Window::keyPressEvent(QKeyEvent *e)
 {
     restartQuitTimer();
-    switch (e->key()) {
-    case Qt::Key_BracketLeft:
-        rotateLeft();
-        break;
-    case Qt::Key_BracketRight:
-        rotateRight();
-        break;
-    case Qt::Key_Less:
-        previousPage();
-        break;
-    case Qt::Key_Greater:
-        nextPage();
-        break;
-    case Qt::Key_Home:
-        home();
-        break;
-    case Qt::Key_End:
-        end();
-        break;
-    case Qt::Key_Slash:
-        startSearch();
-        break;
-    case Qt::Key_C:
-        if (e->modifiers() == Qt::NoModifier) {
-            toggleCursorVisible();
-        } else if (e->modifiers() == Qt::ControlModifier) {
-            copyPath();
-        }
-        break;
-    case Qt::Key_I:
-        if (e->modifiers() & Qt::ControlModifier) {
-            showInfo();
-        }
-        break;
-    case Qt::Key_H:
-        toggleShowThumbnails();
-        break;
-    case Qt::Key_T:
-        if (e->modifiers() == Qt::ShiftModifier) {
-            static const Qt::GlobalColor colors[] = { Qt::white, Qt::black, Qt::yellow, Qt::green, Qt::cyan, Qt::transparent };
-            static int idx = 0;
-            if (colors[++idx] == Qt::transparent)
-                idx = 0;
-            d.penColor = colors[idx];
-            viewport()->update();
-        } else {
-            toggleShowFileName();
-        }
-        break;
-    case Qt::Key_Space:
-        if (d.slideShowTimer.isActive()) {
-            toggleSlideShow();
-        } else if (e->modifiers() & (Qt::ControlModifier|Qt::AltModifier)) {
-            nextDirectory(e->modifiers() & Qt::ShiftModifier ? -1 : 1);
-        } else if (e->modifiers() & Qt::ShiftModifier) {
-            moveCurrentIndexBy(-1);
-        } else {
-            moveCurrentIndexBy(1);
-        }
-        break;
-    case Qt::Key_Left:
-        if (e->modifiers() & Qt::AltModifier) {
-            back();
-            break;
-        }
-        // fallthrough
-    case Qt::Key_Up:
-        moveCurrentIndexBy(e->modifiers() & Qt::ControlModifier ? -10 : -1);
-        break;
-    case Qt::Key_Right:
-        if (e->modifiers() & Qt::AltModifier) {
-            forward();
-            break;
-        }
-
-    case Qt::Key_Down:
-        moveCurrentIndexBy(e->modifiers() & Qt::ControlModifier ? 10 : 1);
-        break;
-    case Qt::Key_S:
-        if (e->modifiers() == Qt::NoModifier) {
-            toggleSlideShow();
-        }
-        break;
-    case Qt::Key_Plus:
-        d.slideShowInterval *= 0.9;
-        d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
-        break;
-    case Qt::Key_Minus:
-        d.slideShowInterval *= 1.1;
-        d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
-        break;
-    case Qt::Key_F:
-        if (e->modifiers() == Qt::NoModifier) {
-            if (windowState() & Qt::WindowFullScreen) {
-                showNormal();
-            } else {
-                showFullScreen();
-            }
-        } else if (e->modifiers() == Qt::ShiftModifier && d.current != -1) {
-            printf("%s\n", qPrintable(d.data.at(d.current)->path));
-        }
-        break;
-    case Qt::Key_N:
-    case Qt::Key_P:
-        if ((e->key() == Qt::Key_N) == (e->modifiers() == Qt::NoModifier)) {
-            searchNext();
-        } else {
-            searchPrevious();
-        }
-        break;
-    case Qt::Key_X:
-        if (e->modifiers() == Qt::NoModifier) {
-            showMaximized();
-        }
-        break;
-    case Qt::Key_Z:
-        if (e->modifiers() == Qt::ControlModifier) {
-            toggleAutoZoom();
-        } else if (e->modifiers() & Qt::ShiftModifier) {
-            shuffle();
-        } else if (d.data.size() > 1) {
-            if (e->modifiers() == Qt::ControlModifier && d.search && !d.lineEdit->text().isEmpty()) {
-                int count = rand() % (d.data.size() / 10);
-                while (count--)
-                    searchNext();
-            } else if (e->modifiers() == Qt::NoModifier)  {
-                const int index = rand() % d.data.size();
-                setCurrentIndex(index);
-            }
-        }
-
-        break;
-    case Qt::Key_R:
-        if (e->modifiers() & Qt::AltModifier) {
-            addDirectoryRecursively();
-        } else if (e->modifiers() & Qt::ShiftModifier) {
-            startRect();
-        } else {
-            showNormal();
-        }
-        break;
-    case Qt::Key_Delete:
-    case Qt::Key_Backspace:
-        toggleRemoveCurrentImage();
-        break;
-
-    case Qt::Key_D:
-        if (e->modifiers() & Qt::ControlModifier) {
-            toggleRemoveCurrentImage();
-        } else {
-            addDirectory();
-        }
-        break;
-    case Qt::Key_U:
-        if (e->modifiers() & Qt::ControlModifier) {
-            undeleteCurrentImage();
-        } else {
-            viewport()->update();
-        }
-        break;
-    case Qt::Key_O:
-    case Qt::Key_L:
-        addImages();
-        break;
-    case Qt::Key_Q:
-        close();
-        break;
-    case Qt::Key_0:
-    case Qt::Key_1:
-    case Qt::Key_2:
-    case Qt::Key_3:
-    case Qt::Key_4:
-    case Qt::Key_5:
-    case Qt::Key_6:
-    case Qt::Key_7:
-    case Qt::Key_8:
-    case Qt::Key_9: {
-        if (d.data.isEmpty() || e->text().isEmpty())
+    const int key = e->key();
+    if (key >= Qt::Key_0 && key <= Qt::Key_9
+        && e->modifiers() == Qt::NoModifier) {
+        if (d.data.isEmpty() || e->text().isEmpty()) {
             return;
+        }
         d.indexBuffer.append(e->text());
         forever {
             bool ok;
-            int i = d.indexBuffer.toInt(&ok) - 1; // indexes are 0-indexed
+            int i = d.indexBuffer.toInt(&ok) - 1;
             Q_ASSERT(ok);
             if (i >= d.data.size()) {
                 d.indexBuffer.remove(0, 1);
@@ -1881,19 +2039,22 @@ void Window::keyPressEvent(QKeyEvent *e)
                 break;
             }
         }
-        if (!d.indexBuffer.isEmpty())
+        if (!d.indexBuffer.isEmpty()) {
             d.indexBufferClearTimer.start(2000, this);
+        }
         return;
     }
-    case Qt::Key_Escape:
+    if (key == Qt::Key_Escape) {
         if (d.indexBuffer.isEmpty()) {
             close();
         } else {
             d.indexBuffer.clear();
             d.indexBufferTimer.stop();
         }
+        return;
     }
     d.indexBuffer.clear();
+    QAbstractScrollArea::keyPressEvent(e);
 }
 
 void Window::setCurrentIndex(int index)
@@ -1915,6 +2076,7 @@ void Window::setCurrentIndex(int index)
         QSet<int> remove = surrounding(d.current, d.data.size(), d.maxImages);
         if (d.current != index) {
             d.thumbLeft = d.thumbRight = ThumbInfo();
+            resetCycleCursors();
         }
         d.current = index;
         foreach(int r, remove) {
@@ -2436,6 +2598,313 @@ void Window::shuffle()
     d.thumbLeft = d.thumbRight = ThumbInfo();
     updateImages();
     viewport()->update();
+}
+
+static void shuffleNeighborSlot(QList<Data*> &data, int current, int offset)
+{
+    const int size = data.size();
+    if (size < 4) {
+        return;
+    }
+    int slot = current + offset;
+    while (slot < 0) {
+        slot += size;
+    }
+    while (slot >= size) {
+        slot -= size;
+    }
+    if (slot == current) {
+        return;
+    }
+    const int other = (offset > 0) ? current - 1 : current + 1;
+    int normalizedOther = other;
+    while (normalizedOther < 0) {
+        normalizedOther += size;
+    }
+    while (normalizedOther >= size) {
+        normalizedOther -= size;
+    }
+    int pick;
+    do {
+        pick = rand() % size;
+    } while (pick == current || pick == slot || pick == normalizedOther);
+    std::swap(data[slot], data[pick]);
+}
+
+void Window::shufflePrev()
+{
+    if (d.data.size() < 4 || d.current == -1) {
+        return;
+    }
+    shuffleNeighborSlot(d.data, d.current, -1);
+    d.thumbLeft = ThumbInfo();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::shuffleNext()
+{
+    if (d.data.size() < 4 || d.current == -1) {
+        return;
+    }
+    shuffleNeighborSlot(d.data, d.current, 1);
+    d.thumbRight = ThumbInfo();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::shuffleCenter()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    const int left = (d.current - 1 + size) % size;
+    const int right = (d.current + 1) % size;
+    int pick;
+    do {
+        pick = rand() % size;
+    } while (pick == d.current || pick == left || pick == right);
+    std::swap(d.data[d.current], d.data[pick]);
+    // Swapping Data* keeps d.current pointing at the same slot index, which
+    // now holds a different image. Thumbs (left/right neighbors) are unchanged.
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::resetCycleCursors()
+{
+    d.cycleCursor[0] = -1;
+    d.cycleCursor[1] = 0;
+    d.cycleCursor[2] = 1;
+}
+
+namespace {
+// Advance a cycle cursor by `direction` (±1), skipping the three slot offsets
+// that are currently visible (-1, 0, +1 relative to current).
+void advanceCycleCursor(int &cursor, int direction, int size)
+{
+    if (size <= 3) {
+        return;
+    }
+    cursor += direction;
+    while (cursor == -1 || cursor == 0 || cursor == 1) {
+        cursor += direction;
+    }
+    // Keep cursor in a bounded range so repeated cycling doesn't overflow.
+    // The modulo maps to a unique image slot relative to current.
+    while (cursor < -size) {
+        cursor += size;
+    }
+    while (cursor > size) {
+        cursor -= size;
+    }
+}
+}
+
+void Window::cyclePrevForward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[0], 1, size);
+    const int slotIdx = (d.current - 1 + size) % size;
+    const int targetIdx = ((d.current + d.cycleCursor[0]) % size + size) % size;
+    if (slotIdx == targetIdx) {
+        return;
+    }
+    std::swap(d.data[slotIdx], d.data[targetIdx]);
+    d.thumbLeft = ThumbInfo();
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::cyclePrevBackward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[0], -1, size);
+    const int slotIdx = (d.current - 1 + size) % size;
+    const int targetIdx = ((d.current + d.cycleCursor[0]) % size + size) % size;
+    if (slotIdx == targetIdx) {
+        return;
+    }
+    std::swap(d.data[slotIdx], d.data[targetIdx]);
+    d.thumbLeft = ThumbInfo();
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::cycleCenterForward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[1], 1, size);
+    const int targetIdx = ((d.current + d.cycleCursor[1]) % size + size) % size;
+    if (targetIdx == d.current) {
+        return;
+    }
+    std::swap(d.data[d.current], d.data[targetIdx]);
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::cycleCenterBackward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[1], -1, size);
+    const int targetIdx = ((d.current + d.cycleCursor[1]) % size + size) % size;
+    if (targetIdx == d.current) {
+        return;
+    }
+    std::swap(d.data[d.current], d.data[targetIdx]);
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::cycleNextForward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[2], 1, size);
+    const int slotIdx = (d.current + 1) % size;
+    const int targetIdx = ((d.current + d.cycleCursor[2]) % size + size) % size;
+    if (slotIdx == targetIdx) {
+        return;
+    }
+    std::swap(d.data[slotIdx], d.data[targetIdx]);
+    d.thumbRight = ThumbInfo();
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::cycleNextBackward()
+{
+    const int size = d.data.size();
+    if (size < 4 || d.current == -1) {
+        return;
+    }
+    advanceCycleCursor(d.cycleCursor[2], -1, size);
+    const int slotIdx = (d.current + 1) % size;
+    const int targetIdx = ((d.current + d.cycleCursor[2]) % size + size) % size;
+    if (slotIdx == targetIdx) {
+        return;
+    }
+    std::swap(d.data[slotIdx], d.data[targetIdx]);
+    d.thumbRight = ThumbInfo();
+    d.imageLoaderThread.clear();
+    d.loading.clear();
+    updateImages();
+    updateAreas();
+    viewport()->update();
+}
+
+void Window::randomImage()
+{
+    if (d.data.size() <= 1) {
+        return;
+    }
+    const int index = rand() % d.data.size();
+    setCurrentIndex(index);
+}
+
+void Window::randomSearchNext()
+{
+    if (d.data.size() <= 1 || !d.search || d.lineEdit->text().isEmpty()) {
+        return;
+    }
+    int count = rand() % (d.data.size() / 10 + 1);
+    while (count--) {
+        searchNext();
+    }
+}
+
+void Window::cyclePenColor()
+{
+    static const Qt::GlobalColor colors[] = {
+        Qt::white, Qt::black, Qt::yellow, Qt::green, Qt::cyan, Qt::transparent
+    };
+    static int idx = 0;
+    ++idx;
+    if (colors[idx] == Qt::transparent) {
+        idx = 0;
+    }
+    d.penColor = colors[idx];
+    viewport()->update();
+}
+
+void Window::slideshowFaster()
+{
+    d.slideShowInterval *= 0.9;
+    d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+}
+
+void Window::slideshowSlower()
+{
+    d.slideShowInterval *= 1.1;
+    d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
+}
+
+void Window::printPath()
+{
+    if (d.current != -1) {
+        printf("%s\n", qPrintable(d.data.at(d.current)->path));
+        fflush(stdout);
+    }
+}
+
+void Window::toggleFullScreen()
+{
+    if (windowState() & Qt::WindowFullScreen) {
+        showNormal();
+    } else {
+        showFullScreen();
+    }
+}
+
+void Window::showMaximizedSlot()
+{
+    showMaximized();
+}
+
+void Window::showNormalSlot()
+{
+    showNormal();
+}
+
+void Window::quitSlot()
+{
+    close();
 }
 
 void Window::rotateLeft()
