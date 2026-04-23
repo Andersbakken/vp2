@@ -1497,8 +1497,12 @@ void Window::onImageLoaded(void *userData, const QImage &image, const QSize &ori
 {
     static const bool verbose = (qgetenv("VP2_VERBOSE") == "1");
     Data *dt = reinterpret_cast<Data*>(userData);
-    const int idx = d.loading.value(dt, -1);
     d.loading.remove(dt);
+    // Re-derive the index from d.data rather than relying on d.loading: after a
+    // shuffle d.loading may have been cleared while this load was in flight, and
+    // we still want to store the image and refresh the UI if dt is currently
+    // visible (center or immediate neighbor).
+    const int idx = d.data.indexOf(dt);
     if (verbose) {
         qDebug() << "got image" << idx << "current" << d.current << d.loading.values();
     }
@@ -2407,6 +2411,9 @@ void Window::shuffle()
     if (d.data.isEmpty())
         return;
     Data *current = d.data.at(d.current);
+    // Drop any queued image loads so their results (with now-stale indices)
+    // don't race updateImages() below. Leaves loaded dt->image data intact.
+    d.imageLoaderThread.clear();
     d.loading.clear();
     d.history.clear();
     d.sort = Random;
