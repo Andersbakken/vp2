@@ -2385,12 +2385,23 @@ void Window::onNetworkReplyFinished(QNetworkReply *reply)
         QBuffer buffer;
         buffer.setData(data);
         QImageReader reader(&buffer);
+        reader.setAutoTransform(true);
         QSize s = reader.size();
+        // See threads.cpp: QImageReader::size() is pre-transform. Transpose so
+        // aspect-fit targets the orientation the user will actually see.
+        const bool exifSwapsAxes = reader.transformation() & QImageIOHandler::TransformationRotate90;
+        if (exifSwapsAxes) {
+            s.transpose();
+        }
         if (test(AutoZoomEnabled)) {
             const QSize target = centerImageTargetSize();
             if (s != target) {
                 s.scale(target, Qt::KeepAspectRatio);
-                reader.setScaledSize(s);
+                QSize readerScaled = s;
+                if (exifSwapsAxes) {
+                    readerScaled.transpose();
+                }
+                reader.setScaledSize(readerScaled);
             }
         }
         node->originalSize = s;
