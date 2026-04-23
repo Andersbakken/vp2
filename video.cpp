@@ -17,7 +17,11 @@ class VideoDecoderPrivate
 public:
     VideoDecoderPrivate()
         : fmtCtx(0), codecCtx(0), swsCtx(0), frame(0), rgbFrame(0), packet(0),
-          streamIndex(-1), durationSec(0.0), fps(0.0) {}
+          streamIndex(-1), durationSec(0.0), fps(0.0), currentSec(0.0)
+    {
+        timeBase.num = 0;
+        timeBase.den = 1;
+    }
 
     AVFormatContext *fmtCtx;
     AVCodecContext *codecCtx;
@@ -28,6 +32,8 @@ public:
     int streamIndex;
     double durationSec;
     double fps;
+    double currentSec;
+    AVRational timeBase;
     QSize size;
     QSize targetSize;
     QSize lastScaleTarget;
@@ -75,6 +81,9 @@ void VideoDecoder::close()
     d->streamIndex = -1;
     d->durationSec = 0.0;
     d->fps = 0.0;
+    d->currentSec = 0.0;
+    d->timeBase.num = 0;
+    d->timeBase.den = 1;
     d->size = QSize();
 }
 
@@ -121,6 +130,7 @@ bool VideoDecoder::open(const QString &path)
     }
 
     d->size = QSize(d->codecCtx->width, d->codecCtx->height);
+    d->timeBase = st->time_base;
     if (d->fmtCtx->duration > 0) {
         d->durationSec = double(d->fmtCtx->duration) / double(AV_TIME_BASE);
     }
@@ -130,6 +140,7 @@ bool VideoDecoder::open(const QString &path)
     if (d->fps <= 0.0) {
         d->fps = 25.0;
     }
+    d->currentSec = 0.0;
 
     d->frame = av_frame_alloc();
     d->rgbFrame = av_frame_alloc();
@@ -149,6 +160,11 @@ QSize VideoDecoder::frameSize() const
 double VideoDecoder::durationSeconds() const
 {
     return d->durationSec;
+}
+
+double VideoDecoder::currentSeconds() const
+{
+    return d->currentSec;
 }
 
 double VideoDecoder::frameRate() const
@@ -204,6 +220,13 @@ bool VideoDecoder::decodeNextFrame(QImage *out)
         return false;
     }
 
+    // Convert frame pts (in stream timebase) to seconds. best_effort_timestamp
+    // handles containers where pts is AV_NOPTS_VALUE but dts is usable.
+    const int64_t pts = d->frame->best_effort_timestamp;
+    if (pts != AV_NOPTS_VALUE && d->timeBase.den > 0) {
+        d->currentSec = double(pts) * double(d->timeBase.num) / double(d->timeBase.den);
+    }
+
     int outW = w;
     int outH = h;
     if (!d->targetSize.isEmpty()) {
@@ -239,6 +262,7 @@ bool VideoDecoder::seek(double seconds)
         return false;
     }
     avcodec_flush_buffers(d->codecCtx);
+    d->currentSec = seconds;
     return true;
 }
 

@@ -20,6 +20,7 @@ public:
 
     QSize frameSize() const;
     double durationSeconds() const;
+    double currentSeconds() const;
     double frameRate() const;
 
     // Target output size for decoded frames. Empty = native resolution. When

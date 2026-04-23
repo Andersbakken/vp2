@@ -96,6 +96,11 @@ public slots:
     void toggleVideoPlayback();
     void videoSeekForward();
     void videoSeekBackward();
+    void videoSkipForward10();
+    void videoSkipBackward10();
+    void onPositionSliderMoved(int value);
+    void onPositionSliderPressed();
+    void onPositionSliderReleased();
     void randomImage();
     void randomSearchNext();
     void cyclePenColor();
@@ -262,6 +267,11 @@ private:
     void startCenterVideoIfAny();
     void stopCenterVideo();
     void advanceVideoFrame();
+    void createVideoControls();
+    void layoutVideoControls();
+    void updateVideoControlsVisibility();
+    void updatePositionSlider();
+    void updateSpaceShortcutOwner();
 
     struct {
         Actions act;
@@ -316,6 +326,12 @@ private:
         QBasicTimer videoPlaybackTimer;
         bool videoPaused;
         double videoSeekSeconds;
+        QWidget *videoControls;
+        QToolButton *playPauseButton;
+        QToolButton *skipBackButton;
+        QToolButton *skipForwardButton;
+        QSlider *positionSlider;
+        bool positionSliderPressed;
 #endif
     } d;
 };

@@ -72,6 +72,12 @@ Window::Window(const QStringList &args, QWidget *parent)
     d.videoDecoderOwner = 0;
     d.videoPaused = false;
     d.videoSeekSeconds = 5.0;
+    d.videoControls = 0;
+    d.playPauseButton = 0;
+    d.skipBackButton = 0;
+    d.skipForwardButton = 0;
+    d.positionSlider = 0;
+    d.positionSliderPressed = false;
 #endif
 
     //    setViewport(new Viewport(this));
@@ -93,6 +99,9 @@ Window::Window(const QStringList &args, QWidget *parent)
 
     setBackgroundColor(QSettings().value("bgcol", "grid").toString().toLower());
     createActions();
+#ifdef VIDEO_ENABLED
+    createVideoControls();
+#endif
     parseArgs(args);
 
     const QList<QFileInfo> files = backupDir().entryInfoList(QDir::Files|QDir::NoDotAndDotDot);
@@ -1202,6 +1211,7 @@ void Window::resizeEvent(QResizeEvent *e)
     if (d.videoDecoder && test(AutoZoomEnabled)) {
         d.videoDecoder->setTargetSize(centerImageTargetSize());
     }
+    layoutVideoControls();
 #endif
     QAbstractScrollArea::resizeEvent(e);
 }
@@ -1847,22 +1857,63 @@ void Window::toggleSlideShow()
     } else {
         d.slideShowTimer.start(int(d.slideShowInterval * 1000.0), this);
     }
-    // While the slideshow is running, Space should stop it rather than
-    // advance the current image. Move the Space shortcut between the two
-    // actions so the QAction system dispatches to the right slot.
-    if (d.act.toggleSlideShow && d.act.nextImage) {
-        QList<QKeySequence> nextShortcuts;
-        QList<QKeySequence> toggleShortcuts;
-        nextShortcuts << QKeySequence(Qt::Key_Right) << QKeySequence(Qt::Key_Down);
-        toggleShortcuts << QKeySequence(Qt::Key_S);
-        if (d.slideShowTimer.isActive()) {
-            toggleShortcuts << QKeySequence(Qt::Key_Space);
+    updateSpaceShortcutOwner();
+}
+
+// Space has three contextual owners depending on what's happening:
+//   - active video on center  → toggleVideoPlayback (play/pause)
+//   - active slideshow        → toggleSlideShow    (stop)
+//   - otherwise               → nextImage          (advance)
+// Qt's shortcut system dispatches based on which QAction has the key, so we
+// physically move Qt::Key_Space between actions rather than branching inside
+// a slot (which wouldn't know which shortcut triggered it).
+void Window::updateSpaceShortcutOwner()
+{
+    if (!d.act.nextImage || !d.act.toggleSlideShow) {
+        return;
+    }
+    QList<QKeySequence> nextShortcuts;
+    nextShortcuts << QKeySequence(Qt::Key_Right) << QKeySequence(Qt::Key_Down);
+    QList<QKeySequence> slideShortcuts;
+    slideShortcuts << QKeySequence(Qt::Key_S);
+
+#ifdef VIDEO_ENABLED
+    const bool videoActive = d.videoDecoder != 0;
+#else
+    const bool videoActive = false;
+#endif
+    const bool slideActive = d.slideShowTimer.isActive();
+
+    if (videoActive) {
+#ifdef VIDEO_ENABLED
+        if (d.act.toggleVideoPlayback) {
+            QList<QKeySequence> vidShortcuts;
+            vidShortcuts << QKeySequence(Qt::Key_P)
+                         << QKeySequence(Qt::Key_Return)
+                         << QKeySequence(Qt::Key_Enter)
+                         << QKeySequence(Qt::Key_Space);
+            d.act.toggleVideoPlayback->setShortcuts(vidShortcuts);
+        }
+#endif
+    } else {
+#ifdef VIDEO_ENABLED
+        if (d.act.toggleVideoPlayback) {
+            QList<QKeySequence> vidShortcuts;
+            vidShortcuts << QKeySequence(Qt::Key_P)
+                         << QKeySequence(Qt::Key_Return)
+                         << QKeySequence(Qt::Key_Enter);
+            d.act.toggleVideoPlayback->setShortcuts(vidShortcuts);
+        }
+#endif
+        if (slideActive) {
+            slideShortcuts << QKeySequence(Qt::Key_Space);
         } else {
             nextShortcuts << QKeySequence(Qt::Key_Space);
         }
-        d.act.nextImage->setShortcuts(nextShortcuts);
-        d.act.toggleSlideShow->setShortcuts(toggleShortcuts);
     }
+
+    d.act.nextImage->setShortcuts(nextShortcuts);
+    d.act.toggleSlideShow->setShortcuts(slideShortcuts);
 }
 
 void Window::toggleAutoZoom()
@@ -2949,6 +3000,8 @@ void Window::startCenterVideoIfAny()
     const double fps = d.videoDecoder->frameRate();
     const int intervalMs = fps > 0.0 ? qMax(1, int(1000.0 / fps)) : 40;
     d.videoPlaybackTimer.start(intervalMs, this);
+    updateVideoControlsVisibility();
+    updateSpaceShortcutOwner();
 }
 
 void Window::stopCenterVideo()
@@ -2960,6 +3013,8 @@ void Window::stopCenterVideo()
     }
     d.videoDecoderOwner = 0;
     d.videoPaused = false;
+    updateVideoControlsVisibility();
+    updateSpaceShortcutOwner();
 }
 
 void Window::advanceVideoFrame()
@@ -2980,6 +3035,7 @@ void Window::advanceVideoFrame()
         }
     }
     d.videoDecoderOwner->image = frame;
+    updatePositionSlider();
     viewport()->update();
 }
 
@@ -2996,6 +3052,7 @@ void Window::toggleVideoPlayback()
         const int intervalMs = fps > 0.0 ? qMax(1, int(1000.0 / fps)) : 40;
         d.videoPlaybackTimer.start(intervalMs, this);
     }
+    updateVideoControlsVisibility();
 }
 
 void Window::videoSeekForward()
@@ -3004,31 +3061,211 @@ void Window::videoSeekForward()
         return;
     }
     const double duration = d.videoDecoder->durationSeconds();
-    double target = d.videoSeekSeconds;
-    // We don't track current position so seek is relative-from-zero-ish; use
-    // the decoder's internal timestamp instead. Simpler: skip forward by
-    // grabbing N frames ahead.
-    const int framesToSkip = int(target * d.videoDecoder->frameRate());
-    QImage dummy;
-    for (int i = 0; i < framesToSkip; ++i) {
-        if (!d.videoDecoder->decodeNextFrame(&dummy)) {
-            break;
-        }
+    double target = d.videoDecoder->currentSeconds() + d.videoSeekSeconds;
+    if (duration > 0.0 && target > duration - 0.1) {
+        target = qMax(0.0, duration - 0.1);
     }
-    (void)duration;
-    advanceVideoFrame();
+    if (d.videoDecoder->seek(target)) {
+        advanceVideoFrame();
+    }
 }
 
 void Window::videoSeekBackward()
 {
-    if (!d.videoDecoder || !d.videoDecoderOwner) {
+    if (!d.videoDecoder) {
         return;
     }
-    // We don't track current position, so "seek backward" can only rewind to
-    // the start reliably. A real implementation would track the current pts
-    // and seek to (current - delta). For now, rewind and play from 0.
-    if (d.videoDecoder->seek(0.0)) {
+    double target = d.videoDecoder->currentSeconds() - d.videoSeekSeconds;
+    if (target < 0.0) {
+        target = 0.0;
+    }
+    if (d.videoDecoder->seek(target)) {
         advanceVideoFrame();
+    }
+}
+
+namespace {
+// Cap the skip step at 10% of total duration so short videos don't fast-forward
+// past the end (or back to zero) in a single keypress. Falls back to 10s for
+// unknown-duration streams.
+double cappedSkipStep(double durationSeconds)
+{
+    double step = 10.0;
+    if (durationSeconds > 0.0) {
+        step = qMin(step, durationSeconds * 0.1);
+    }
+    return step;
+}
+}
+
+void Window::videoSkipForward10()
+{
+    if (!d.videoDecoder) {
+        return;
+    }
+    const double duration = d.videoDecoder->durationSeconds();
+    const double step = cappedSkipStep(duration);
+    double target = d.videoDecoder->currentSeconds() + step;
+    if (duration > 0.0 && target > duration - 0.1) {
+        target = qMax(0.0, duration - 0.1);
+    }
+    if (d.videoDecoder->seek(target)) {
+        advanceVideoFrame();
+        updatePositionSlider();
+    }
+}
+
+void Window::videoSkipBackward10()
+{
+    if (!d.videoDecoder) {
+        return;
+    }
+    const double step = cappedSkipStep(d.videoDecoder->durationSeconds());
+    double target = d.videoDecoder->currentSeconds() - step;
+    if (target < 0.0) {
+        target = 0.0;
+    }
+    if (d.videoDecoder->seek(target)) {
+        advanceVideoFrame();
+        updatePositionSlider();
+    }
+}
+
+void Window::onPositionSliderPressed()
+{
+    d.positionSliderPressed = true;
+}
+
+void Window::onPositionSliderReleased()
+{
+    d.positionSliderPressed = false;
+    if (!d.videoDecoder || !d.positionSlider) {
+        return;
+    }
+    const double duration = d.videoDecoder->durationSeconds();
+    if (duration <= 0.0) {
+        return;
+    }
+    const double frac = double(d.positionSlider->value())
+        / double(d.positionSlider->maximum());
+    if (d.videoDecoder->seek(frac * duration)) {
+        advanceVideoFrame();
+    }
+}
+
+void Window::onPositionSliderMoved(int value)
+{
+    if (!d.videoDecoder) {
+        return;
+    }
+    const double duration = d.videoDecoder->durationSeconds();
+    if (duration <= 0.0 || !d.positionSlider) {
+        return;
+    }
+    const double frac = double(value) / double(d.positionSlider->maximum());
+    if (d.videoDecoder->seek(frac * duration)) {
+        advanceVideoFrame();
+    }
+}
+
+void Window::createVideoControls()
+{
+    d.videoControls = new QWidget(this);
+    d.videoControls->setAttribute(Qt::WA_NoChildEventsForParent, false);
+    d.videoControls->setFocusPolicy(Qt::NoFocus);
+    d.videoControls->setAutoFillBackground(true);
+    QPalette pal = d.videoControls->palette();
+    pal.setColor(QPalette::Window, QColor(0, 0, 0, 160));
+    pal.setColor(QPalette::WindowText, Qt::white);
+    d.videoControls->setPalette(pal);
+
+    QHBoxLayout *l = new QHBoxLayout(d.videoControls);
+    l->setContentsMargins(8, 4, 8, 4);
+    l->setSpacing(6);
+
+    d.skipBackButton = new QToolButton(d.videoControls);
+    d.skipBackButton->setFocusPolicy(Qt::NoFocus);
+    d.skipBackButton->setText(QString::fromUtf8("\u23EA"));
+    d.skipBackButton->setToolTip(tr("Skip backward (up to 10s, capped at 10% of duration)"));
+    connect(d.skipBackButton, SIGNAL(clicked()), this, SLOT(videoSkipBackward10()));
+    l->addWidget(d.skipBackButton);
+
+    d.playPauseButton = new QToolButton(d.videoControls);
+    d.playPauseButton->setFocusPolicy(Qt::NoFocus);
+    d.playPauseButton->setText(QString::fromUtf8("\u23F8"));
+    d.playPauseButton->setToolTip(tr("Play/pause"));
+    connect(d.playPauseButton, SIGNAL(clicked()), this, SLOT(toggleVideoPlayback()));
+    l->addWidget(d.playPauseButton);
+
+    d.skipForwardButton = new QToolButton(d.videoControls);
+    d.skipForwardButton->setFocusPolicy(Qt::NoFocus);
+    d.skipForwardButton->setText(QString::fromUtf8("\u23E9"));
+    d.skipForwardButton->setToolTip(tr("Skip forward (up to 10s, capped at 10% of duration)"));
+    connect(d.skipForwardButton, SIGNAL(clicked()), this, SLOT(videoSkipForward10()));
+    l->addWidget(d.skipForwardButton);
+
+    d.positionSlider = new QSlider(Qt::Horizontal, d.videoControls);
+    d.positionSlider->setFocusPolicy(Qt::NoFocus);
+    d.positionSlider->setRange(0, 1000);
+    d.positionSlider->setSingleStep(5);
+    d.positionSlider->setPageStep(50);
+    connect(d.positionSlider, SIGNAL(sliderPressed()),
+            this, SLOT(onPositionSliderPressed()));
+    connect(d.positionSlider, SIGNAL(sliderReleased()),
+            this, SLOT(onPositionSliderReleased()));
+    connect(d.positionSlider, SIGNAL(sliderMoved(int)),
+            this, SLOT(onPositionSliderMoved(int)));
+    l->addWidget(d.positionSlider, 1);
+
+    d.videoControls->hide();
+}
+
+void Window::layoutVideoControls()
+{
+    if (!d.videoControls) {
+        return;
+    }
+    const int lineEditH = d.lineEdit ? d.lineEdit->sizeHint().height() : 0;
+    const int ctlH = d.videoControls->sizeHint().height();
+    QRect r(0, 0, width(), ctlH);
+    r.moveBottom(height() - lineEditH);
+    d.videoControls->setGeometry(r);
+    d.videoControls->raise();
+}
+
+void Window::updateVideoControlsVisibility()
+{
+    if (!d.videoControls) {
+        return;
+    }
+    const bool show = d.videoDecoder != 0;
+    if (show != d.videoControls->isVisible()) {
+        d.videoControls->setVisible(show);
+    }
+    if (show) {
+        layoutVideoControls();
+        d.playPauseButton->setText(d.videoPaused
+            ? QString::fromUtf8("\u25B6")
+            : QString::fromUtf8("\u23F8"));
+    }
+}
+
+void Window::updatePositionSlider()
+{
+    if (!d.positionSlider || !d.videoDecoder || d.positionSliderPressed) {
+        return;
+    }
+    const double duration = d.videoDecoder->durationSeconds();
+    if (duration <= 0.0) {
+        return;
+    }
+    const double frac = d.videoDecoder->currentSeconds() / duration;
+    const int val = qBound(0, int(frac * d.positionSlider->maximum()),
+                           d.positionSlider->maximum());
+    if (val != d.positionSlider->value()) {
+        d.positionSlider->blockSignals(true);
+        d.positionSlider->setValue(val);
+        d.positionSlider->blockSignals(false);
     }
 }
 #else
@@ -3037,6 +3274,15 @@ void Window::stopCenterVideo() {}
 void Window::advanceVideoFrame() {}
 void Window::toggleVideoPlayback() {}
 void Window::videoSeekForward() {}
+void Window::videoSkipForward10() {}
+void Window::videoSkipBackward10() {}
+void Window::onPositionSliderMoved(int) {}
+void Window::onPositionSliderPressed() {}
+void Window::onPositionSliderReleased() {}
+void Window::createVideoControls() {}
+void Window::layoutVideoControls() {}
+void Window::updateVideoControlsVisibility() {}
+void Window::updatePositionSlider() {}
 void Window::videoSeekBackward() {}
 #endif
 
@@ -3120,6 +3366,15 @@ void Window::quitSlot()
 
 void Window::rotateLeft()
 {
+#ifdef VIDEO_ENABLED
+    // When a video is the center image, the rotate shortcut instead seeks
+    // backward 10s. Rotating a video mid-playback isn't meaningful and we
+    // want [ / ] to feel like scrub keys while watching.
+    if (d.videoDecoder) {
+        videoSkipBackward10();
+        return;
+    }
+#endif
     if (d.current != -1) {
         Data *data = d.data.at(d.current);
         if (data->rotation == 0) {
@@ -3139,6 +3394,12 @@ void Window::rotateLeft()
 
 void Window::rotateRight()
 {
+#ifdef VIDEO_ENABLED
+    if (d.videoDecoder) {
+        videoSkipForward10();
+        return;
+    }
+#endif
     if (d.current != -1) {
         Data *data = d.data.at(d.current);
         if (data->rotation == 270) {
