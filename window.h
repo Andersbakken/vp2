@@ -13,6 +13,7 @@ struct Data {
 
     QString path;
     QImage image;
+    QSize originalSize;
     QMovie *movie;
     int rotation;
 
@@ -113,7 +114,7 @@ public slots:
     void toggleSlideShow();
     void toggleAutoZoom();
     void onImageLoadError(void *);
-    void onImageLoaded(void *, const QImage &image);
+    void onImageLoaded(void *, const QImage &image, const QSize &originalSize);
     void onThumbLoaded(const QImage &thumb);
     void onMovieFrameChanged();
     void debug();
@@ -133,6 +134,7 @@ private:
     void parseArgs(const QStringList &args);
     void addDirectory(const QString &path, bool recurse);
     bool rightSize(const QSize &siz, const QSize &widgetSize) const;
+    QSize centerImageTargetSize() const;
     void load(int index);
     void setCurrentIndex(int index);
     inline int bound(int cnt) const;

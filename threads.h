@@ -24,7 +24,7 @@ public:
     static bool canLoad(const QString &fileName);
     int pending() const;
 signals:
-    void imageLoaded(void *userData, const QImage &image);
+    void imageLoaded(void *userData, const QImage &image, const QSize &originalSize);
     void loadError(void *userData);
 private:
     friend class Window;

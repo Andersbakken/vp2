@@ -100,8 +100,8 @@ Window::Window(const QStringList &args, QWidget *parent)
             }
         }
     }
-    connect(&d.imageLoaderThread, SIGNAL(imageLoaded(void*, QImage)),
-            this, SLOT(onImageLoaded(void *, QImage)));
+    connect(&d.imageLoaderThread, SIGNAL(imageLoaded(void*, QImage, QSize)),
+            this, SLOT(onImageLoaded(void *, QImage, QSize)));
     connect(&d.imageLoaderThread, SIGNAL(loadError(void*)),
             this, SLOT(onImageLoadError(void *)));
     d.imageLoaderThread.start();
@@ -941,9 +941,21 @@ void Window::paintEvent(QPaintEvent *e)
                 }
 
                 if (test(DisplayThumbnails) && d.data.size() > 1) {
-                    const int thumbWidth = qMin(pixmapSize.width(), qMax(d.thumbMinWidth, r.left() - 2));
-                    // qDebug() << pixmapSize << thumbWidth << r;
+                    int thumbWidth = qMin(pixmapSize.width(), qMax(d.thumbMinWidth, r.left() - 2));
                     ThumbInfo *thumbs[] = { &d.thumbLeft, &d.thumbRight };
+                    // Cap thumb width so its scaled height cannot exceed the
+                    // viewport height (prevents top/bottom clipping of tall thumbs).
+                    const int vh = viewport()->height();
+                    for (int i = 0; i < 2; ++i) {
+                        const int idx = bound(d.current + (i == 0 ? -1 : 1));
+                        const QSize srcSize = d.data.at(idx)->currentImage().size();
+                        if (srcSize.height() > 0 && srcSize.width() > 0) {
+                            const int maxWidthForHeight = (vh * srcSize.width()) / srcSize.height();
+                            if (maxWidthForHeight > 0 && thumbWidth > maxWidthForHeight) {
+                                thumbWidth = maxWidthForHeight;
+                            }
+                        }
+                    }
                     for (int i=0; i<2; ++i) {
                         const int idx = bound(d.current + (i == 0 ? -1 : 1));
                         QImage sourceImage = d.data.at(idx)->currentImage();
@@ -977,7 +989,9 @@ void Window::paintEvent(QPaintEvent *e)
             }
             if (test(DisplayFileName)) {
                 drawText(&p, eventRect, textArea(), Qt::AlignTop|Qt::AlignLeft, fm,
-                         dt->path + QString("\n%1 of %2 (%3 images in memory) (%4 in loading queue)").
+                         dt->path + QString(" %1x%2\n%3 of %4 (%5 images in memory) (%6 in loading queue)").
+                         arg(dt->originalSize.width()).
+                         arg(dt->originalSize.height()).
                          arg(d.current + 1).
                          arg(d.data.size()).
                          arg(d.imagesInMemory).
@@ -1000,6 +1014,26 @@ bool Window::rightSize(const QSize &siz, const QSize &widgetSize) const
     return (s == siz);
 }
 
+// Returns the target size the center image should be scaled to fit within.
+// When thumbnails are displayed (and there is more than one image), reserve
+// only a fraction of the thumbnail width on each side so thumbs are allowed
+// to overlay the center image by a small margin. This lets the center image
+// use most of the viewport while still guaranteeing it is never cropped on
+// top/bottom by height-dominant thumbs.
+QSize Window::centerImageTargetSize() const
+{
+    QSize size = viewport()->size();
+    if (test(DisplayThumbnails) && d.data.size() > 1) {
+        // Reserve ~60% of thumbMinWidth per side; remaining 40% is overlay budget.
+        const int reservedPerSide = (d.thumbMinWidth * 3) / 5;
+        const int reserved = 2 * reservedPerSide;
+        if (size.width() > reserved) {
+            size.setWidth(size.width() - reserved);
+        }
+    }
+    return size;
+}
+
 void Window::load(int index)
 {
     Q_ASSERT(index < d.data.size() && index >= 0);
@@ -1018,7 +1052,7 @@ void Window::load(int index)
         flags |= ImageLoaderThread::HighPriority;
     QSize size;
     if (test(AutoZoomEnabled)) {
-        size = viewport()->size();
+        size = centerImageTargetSize();
         if (dt->movie) {
             QSize currentSize = dt->movie->scaledSize();
             if (currentSize.isNull())
@@ -1459,7 +1493,7 @@ void Window::onImageLoadError(void *userData)
     }
 }
 
-void Window::onImageLoaded(void *userData, const QImage &image)
+void Window::onImageLoaded(void *userData, const QImage &image, const QSize &originalSize)
 {
     static const bool verbose = (qgetenv("VP2_VERBOSE") == "1");
     Data *dt = reinterpret_cast<Data*>(userData);
@@ -1475,9 +1509,10 @@ void Window::onImageLoaded(void *userData, const QImage &image)
     if (dt->image.isNull())
         ++d.imagesInMemory;
     dt->image = image;
+    dt->originalSize = originalSize;
 
     if (idx == d.current) {
-        if (!rightSize(image.size(), viewport()->size())) {
+        if (!rightSize(image.size(), centerImageTargetSize())) {
             load(d.current);
         }
         d.updateScrollBarsTimer.start(10, this);
@@ -1636,6 +1671,7 @@ void Window::showInfo()
 void Window::toggleShowThumbnails()
 {
     toggle(DisplayThumbnails);
+    updateImages();
     updateAreas();
     viewport()->update();
 }
@@ -2345,13 +2381,15 @@ void Window::onNetworkReplyFinished(QNetworkReply *reply)
         QBuffer buffer;
         buffer.setData(data);
         QImageReader reader(&buffer);
+        QSize s = reader.size();
         if (test(AutoZoomEnabled)) {
-            QSize s = reader.size();
-            if (s != viewport()->size()) {
-                s.scale(viewport()->size(), Qt::KeepAspectRatio);
+            const QSize target = centerImageTargetSize();
+            if (s != target) {
+                s.scale(target, Qt::KeepAspectRatio);
                 reader.setScaledSize(s);
             }
         }
+        node->originalSize = s;
         node->image = reader.read();
     }
     node->path = reply->url().toString();

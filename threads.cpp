@@ -131,14 +131,33 @@ void ImageLoaderThread::run()
             }
         } else
 #endif
+        node->reader->setAutoTransform(true);
+        QSize originalSize = node->reader->size();
+        // QImageReader::size() returns the size BEFORE EXIF auto-transform.
+        // If the EXIF transform swaps width/height (90/270 rotation or the
+        // corresponding mirrored variants), pre-swap so the aspect-fit
+        // calculation against node->size operates on the post-transform
+        // orientation; otherwise setScaledSize yields an image that exceeds
+        // the requested bounds after Qt applies the rotation.
         {
-            node->reader->setAutoTransform(true);
+            const QImageIOHandler::Transformations tr = node->reader->transformation();
+            if (tr & (QImageIOHandler::TransformationRotate90)) {
+                originalSize.transpose();
+            }
+        }
+        {
             QSize size;
             if (!node->size.isEmpty()) {
-                size = node->reader->size();
+                size = originalSize;
                 size.scale(node->size, Qt::KeepAspectRatio);
-                if (!(node->flags & NoSmoothScale))
-                    node->reader->setScaledSize(size);
+                if (!(node->flags & NoSmoothScale)) {
+                    QSize readerScaled = size;
+                    const QImageIOHandler::Transformations tr = node->reader->transformation();
+                    if (tr & (QImageIOHandler::TransformationRotate90)) {
+                        readerScaled.transpose();
+                    }
+                    node->reader->setScaledSize(readerScaled);
+                }
             }
             if (node->reader->read(&img) && (node->flags & NoSmoothScale) && !size.isNull()) {
                 img = img.scaled(size);
@@ -147,7 +166,7 @@ void ImageLoaderThread::run()
         if (img.isNull()) {
             emit loadError(node->userData);
         } else {
-            emit imageLoaded(node->userData, img);
+            emit imageLoaded(node->userData, img, originalSize);
         }
         delete node;
     }
