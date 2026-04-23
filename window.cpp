@@ -1339,12 +1339,28 @@ void Window::paintEvent(QPaintEvent *e)
                             }
                         }
                     }
+                    static const bool thumbVerbose = (qgetenv("VP2_THUMB_VERBOSE") == "1");
                     for (int i=0; i<2; ++i) {
                         const int idx = bound(d.current + (i == 0 ? -1 : 1));
                         QImage sourceImage = d.data.at(idx)->currentImage();
-                        if (thumbWidth != thumbs[i]->image.width()
-                            && !sourceImage.isNull()
-                            && (!thumbs[i]->thread || thumbs[i]->requestedWidth != thumbWidth)) {
+                        const bool widthMismatch = thumbWidth != thumbs[i]->image.width();
+                        const bool sourceOk = !sourceImage.isNull();
+                        const bool threadIdle = !thumbs[i]->thread
+                            || thumbs[i]->requestedWidth != thumbWidth;
+                        if (thumbVerbose) {
+                            qDebug() << "thumb" << (i == 0 ? "L" : "R")
+                                     << "idx" << idx
+                                     << "path" << d.data.at(idx)->path
+                                     << "flags" << d.data.at(idx)->flags
+                                     << "srcSize" << sourceImage.size()
+                                     << "thumbImgW" << thumbs[i]->image.width()
+                                     << "want" << thumbWidth
+                                     << "widthMismatch" << widthMismatch
+                                     << "sourceOk" << sourceOk
+                                     << "threadIdle" << threadIdle
+                                     << "thread" << thumbs[i]->thread;
+                        }
+                        if (widthMismatch && sourceOk && threadIdle) {
                             thumbs[i]->thread = new ThumbLoaderThread(sourceImage, thumbWidth);
                             d.thumbLoaderThreads.insert(thumbs[i]->thread);
                             thumbs[i]->requestedWidth = thumbWidth;
