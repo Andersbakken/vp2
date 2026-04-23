@@ -3225,10 +3225,9 @@ void Window::layoutVideoControls()
     if (!d.videoControls) {
         return;
     }
-    const int lineEditH = d.lineEdit ? d.lineEdit->sizeHint().height() : 0;
     const int ctlH = d.videoControls->sizeHint().height();
     QRect r(0, 0, width(), ctlH);
-    r.moveBottom(height() - lineEditH);
+    r.moveBottom(height());
     d.videoControls->setGeometry(r);
     d.videoControls->raise();
 }
