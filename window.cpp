@@ -1,8 +1,4 @@
 #include "window.h"
-#ifdef MAGICK_ENABLED
-#include <Magick++/Image.h>
-#include <Magick++/Geometry.h>
-#endif
 
 static QDir backupDir()
 {
@@ -71,6 +67,12 @@ Window::Window(const QStringList &args, QWidget *parent)
     d.networkManager = 0;
     d.imagesInMemory = 0;
     d.sort = None;
+#ifdef VIDEO_ENABLED
+    d.videoDecoder = 0;
+    d.videoDecoderOwner = 0;
+    d.videoPaused = false;
+    d.videoSeekSeconds = 5.0;
+#endif
 
     //    setViewport(new Viewport(this));
     d.lineEdit = new QLineEdit(this);
@@ -79,6 +81,7 @@ Window::Window(const QStringList &args, QWidget *parent)
     //     new QShortcut(QKeySequence(Qt::Key_F6), this, SLOT(debug()));
 
     connect(d.lineEdit, SIGNAL(returnPressed()), this, SLOT(onLineEditReturnPressed()));
+    d.lineEdit->installEventFilter(this);
     d.lineEdit->hide();
 
     setMouseTracking(true);
@@ -228,6 +231,24 @@ void Window::createActions()
                                      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
     connect(a.cycleNextBackward, SIGNAL(triggered()), this, SLOT(cycleNextBackward()));
 
+    a.toggleVideoPlayback = makeAction(this, tr("Play/pause video"),
+                                       QList<QKeySequence>()
+                                       << QKeySequence(Qt::Key_P)
+                                       << QKeySequence(Qt::Key_Return)
+                                       << QKeySequence(Qt::Key_Enter));
+    connect(a.toggleVideoPlayback, SIGNAL(triggered()),
+            this, SLOT(toggleVideoPlayback()));
+
+    a.videoSeekForward = makeAction(this, tr("Seek forward"),
+                                    QKeySequence(Qt::SHIFT | Qt::Key_Right));
+    connect(a.videoSeekForward, SIGNAL(triggered()),
+            this, SLOT(videoSeekForward()));
+
+    a.videoSeekBackward = makeAction(this, tr("Seek backward"),
+                                     QKeySequence(Qt::SHIFT | Qt::Key_Left));
+    connect(a.videoSeekBackward, SIGNAL(triggered()),
+            this, SLOT(videoSeekBackward()));
+
     a.randomImage = makeAction(this, tr("Random image"), QKeySequence(Qt::Key_Z));
     connect(a.randomImage, SIGNAL(triggered()), this, SLOT(randomImage()));
 
@@ -260,9 +281,7 @@ void Window::createActions()
     connect(a.searchNext, SIGNAL(triggered()), this, SLOT(searchNext()));
 
     a.searchPrevious = makeAction(this, tr("Find previous"),
-                                  QList<QKeySequence>()
-                                  << QKeySequence(Qt::SHIFT | Qt::Key_N)
-                                  << QKeySequence(Qt::Key_P));
+                                  QKeySequence(Qt::SHIFT | Qt::Key_N));
     connect(a.searchPrevious, SIGNAL(triggered()), this, SLOT(searchPrevious()));
 
     a.randomSearchNext = makeAction(this, tr("Random search next"),
@@ -353,6 +372,11 @@ void Window::createActions()
 
 Window::~Window()
 {
+#ifdef VIDEO_ENABLED
+    delete d.videoDecoder;
+    d.videoDecoder = 0;
+    d.videoDecoderOwner = 0;
+#endif
     d.imageLoaderThread.abort();
     d.imageLoaderThread.wait();
     qDeleteAll(d.data);
@@ -397,6 +421,23 @@ bool Window::event(QEvent *e)
     }
 
     return QAbstractScrollArea::event(e);
+}
+
+bool Window::eventFilter(QObject *watched, QEvent *e)
+{
+    // While the search/rect line edit has focus, it owns all key input. Accept
+    // ShortcutOverride for every key so Qt's shortcut machinery doesn't fire
+    // window QActions (like N for searchNext, Return for toggleVideoPlayback,
+    // or plain letters that would otherwise invoke view toggles) while the
+    // user is typing a search pattern.
+    if (watched == d.lineEdit && e->type() == QEvent::ShortcutOverride) {
+        QKeyEvent *ke = static_cast<QKeyEvent*>(e);
+        if (ke->key() != Qt::Key_Escape) {
+            ke->accept();
+            return true;
+        }
+    }
+    return QAbstractScrollArea::eventFilter(watched, e);
 }
 
 
@@ -501,6 +542,17 @@ void Window::refreshActionLabels()
     a.showNormal->setEnabled(ws & (Qt::WindowFullScreen | Qt::WindowMaximized));
     a.showMaximized->setEnabled(!(ws & Qt::WindowMaximized));
     a.showFullScreen->setEnabled(!(ws & Qt::WindowFullScreen));
+
+    const bool hasCurrentVideo = haveCurrent
+        && (d.data.at(d.current)->flags & Data::Video);
+    a.toggleVideoPlayback->setEnabled(hasCurrentVideo);
+    a.videoSeekForward->setEnabled(hasCurrentVideo);
+    a.videoSeekBackward->setEnabled(hasCurrentVideo);
+    bool playing = false;
+#ifdef VIDEO_ENABLED
+    playing = hasCurrentVideo && d.videoDecoder && !d.videoPaused;
+#endif
+    a.toggleVideoPlayback->setText(playing ? tr("Pause video") : tr("Play video"));
 }
 
 void Window::contextMenuEvent(QContextMenuEvent *e)
@@ -537,6 +589,11 @@ void Window::contextMenuEvent(QContextMenuEvent *e)
     menu.addAction(a.rotateRight);
     menu.addAction(a.toggleRemove);
     menu.addAction(a.purge);
+    menu.addSeparator();
+
+    menu.addAction(a.toggleVideoPlayback);
+    menu.addAction(a.videoSeekBackward);
+    menu.addAction(a.videoSeekForward);
     menu.addSeparator();
 
     menu.addAction(a.startSearch);
@@ -1141,6 +1198,11 @@ void Window::resizeEvent(QResizeEvent *e)
     r.moveBottom(height());
     d.lineEdit->setGeometry(r);
     updateAreas();
+#ifdef VIDEO_ENABLED
+    if (d.videoDecoder && test(AutoZoomEnabled)) {
+        d.videoDecoder->setTargetSize(centerImageTargetSize());
+    }
+#endif
     QAbstractScrollArea::resizeEvent(e);
 }
 
@@ -1386,47 +1448,62 @@ void Window::load(int index)
         return;
     }
     d.loading[dt] = index;
-#if 0
-    if (dt->path.endsWith(".pdf", Qt::CaseInsensitive)) {
-        Magick::Image pdf(dt->path.toStdString());
-        if (pdf.isValid()) {
-            if (!size.isNull()) {
-                QSize s(pdf.columns(), pdf.rows());
-                s.scale(size, Qt::KeepAspectRatio);
-                pdf.resize(Magick::Geometry(s.width(), s.height()));
-            }
-            if (dt->image.isNull())
-                ++d.imagesInMemory;
-
-            QImage image(pdf.columns(), pdf.rows(), QImage::Format_RGB32);
-            // pdf.write(0, 0, image.width(), image.height(), "RGB", Magick::IntegerPixel, image.bits());
-            pdf.write(0, 0, image.width(), image.height(), "RGB", Magick::CharPixel, image.bits());
-            onImageLoaded(dt, image);
-        }
-    } else
-#endif
-    {
-        QImageReader *reader = new QImageReader(dt->path);
-        if (reader->supportsAnimation()) {
-            QMovie *movie = new QMovie(dt->path);
-            if (movie->isValid() && movie->frameCount() != 1) {
-                dt->movie = movie;
-                if (!size.isNull()) {
-                    QSize scaledSize = reader->size();
-                    scaledSize.scale(size, Qt::KeepAspectRatio);
-                    movie->setScaledSize(scaledSize);
+#ifdef VIDEO_ENABLED
+    if (isVideoPath(dt->path)) {
+        // Decode the first frame synchronously on the main thread. For typical
+        // video files this is fast (well under a frame budget); we accept the
+        // brief hitch to avoid the complexity of per-video loader threads for
+        // every neighbor.
+        VideoDecoder decoder;
+        if (decoder.open(dt->path)) {
+            decoder.setTargetSize(size);
+            QImage first;
+            if (decoder.decodeNextFrame(&first)) {
+                dt->flags |= Data::Video;
+                if (dt->image.isNull()) {
+                    ++d.imagesInMemory;
                 }
-                connect(movie, SIGNAL(frameChanged(int)), this, SLOT(onMovieFrameChanged()));
-                movie->start();
-                d.loading.remove(dt);
-                delete reader;
-                viewport()->update();
-                return;
+                dt->image = first;
+                dt->originalSize = decoder.frameSize();
+            } else {
+                dt->flags |= Data::Failed;
             }
-            delete movie;
+        } else {
+            dt->flags |= Data::Failed;
         }
-        d.imageLoaderThread.load(reader, flags, dt->rotation, dt, size);
+        d.loading.remove(dt);
+        if (index == d.current) {
+            updateAreas();
+        }
+        viewport()->update();
+        return;
     }
+#endif
+    if (dt->path.endsWith(".pdf", Qt::CaseInsensitive)) {
+        dt->flags |= Data::Pdf;
+        d.imageLoaderThread.load(0, flags, dt->rotation, dt, size, dt->path);
+        return;
+    }
+    QImageReader *reader = new QImageReader(dt->path);
+    if (reader->supportsAnimation()) {
+        QMovie *movie = new QMovie(dt->path);
+        if (movie->isValid() && movie->frameCount() != 1) {
+            dt->movie = movie;
+            if (!size.isNull()) {
+                QSize scaledSize = reader->size();
+                scaledSize.scale(size, Qt::KeepAspectRatio);
+                movie->setScaledSize(scaledSize);
+            }
+            connect(movie, SIGNAL(frameChanged(int)), this, SLOT(onMovieFrameChanged()));
+            movie->start();
+            d.loading.remove(dt);
+            delete reader;
+            viewport()->update();
+            return;
+        }
+        delete movie;
+    }
+    d.imageLoaderThread.load(reader, flags, dt->rotation, dt, size, dt->path);
 }
 
 void Window::updateImages()
@@ -1502,6 +1579,10 @@ void Window::timerEvent(QTimerEvent *e)
     } else if (e->timerId() == d.updateScrollBarsTimer.timerId()) {
         updateScrollBars();
         d.updateScrollBarsTimer.stop();
+#ifdef VIDEO_ENABLED
+    } else if (e->timerId() == d.videoPlaybackTimer.timerId()) {
+        advanceVideoFrame();
+#endif
     } else {
         QAbstractScrollArea::timerEvent(e);
     }
@@ -1788,6 +1869,13 @@ void Window::toggleAutoZoom()
 {
     toggle(AutoZoomEnabled);
     updateImages();
+#ifdef VIDEO_ENABLED
+    if (d.videoDecoder) {
+        d.videoDecoder->setTargetSize(test(AutoZoomEnabled)
+                                      ? centerImageTargetSize()
+                                      : QSize());
+    }
+#endif
 }
 
 void Window::onImageLoadError(void *userData)
@@ -2007,6 +2095,11 @@ void Window::toggleShowThumbnails()
     QSettings().setValue("displayThumbnails", test(DisplayThumbnails));
     updateImages();
     updateAreas();
+#ifdef VIDEO_ENABLED
+    if (d.videoDecoder && test(AutoZoomEnabled)) {
+        d.videoDecoder->setTargetSize(centerImageTargetSize());
+    }
+#endif
     viewport()->update();
 }
 
@@ -2077,6 +2170,7 @@ void Window::setCurrentIndex(int index)
         if (d.current != index) {
             d.thumbLeft = d.thumbRight = ThumbInfo();
             resetCycleCursors();
+            stopCenterVideo();
         }
         d.current = index;
         foreach(int r, remove) {
@@ -2092,6 +2186,7 @@ void Window::setCurrentIndex(int index)
         }
 
         updateImages();
+        startCenterVideoIfAny();
         viewport()->update();
     }
 }
@@ -2828,6 +2923,122 @@ void Window::cycleNextBackward()
     updateAreas();
     viewport()->update();
 }
+
+#ifdef VIDEO_ENABLED
+void Window::startCenterVideoIfAny()
+{
+    stopCenterVideo();
+    if (d.current == -1) {
+        return;
+    }
+    Data *dt = d.data.at(d.current);
+    if (!(dt->flags & Data::Video)) {
+        return;
+    }
+    d.videoDecoder = new VideoDecoder;
+    if (!d.videoDecoder->open(dt->path)) {
+        delete d.videoDecoder;
+        d.videoDecoder = 0;
+        return;
+    }
+    if (test(AutoZoomEnabled)) {
+        d.videoDecoder->setTargetSize(centerImageTargetSize());
+    }
+    d.videoDecoderOwner = dt;
+    d.videoPaused = false;
+    const double fps = d.videoDecoder->frameRate();
+    const int intervalMs = fps > 0.0 ? qMax(1, int(1000.0 / fps)) : 40;
+    d.videoPlaybackTimer.start(intervalMs, this);
+}
+
+void Window::stopCenterVideo()
+{
+    d.videoPlaybackTimer.stop();
+    if (d.videoDecoder) {
+        delete d.videoDecoder;
+        d.videoDecoder = 0;
+    }
+    d.videoDecoderOwner = 0;
+    d.videoPaused = false;
+}
+
+void Window::advanceVideoFrame()
+{
+    if (!d.videoDecoder || !d.videoDecoderOwner) {
+        return;
+    }
+    QImage frame;
+    if (!d.videoDecoder->decodeNextFrame(&frame)) {
+        // End of stream; rewind and continue looping.
+        if (!d.videoDecoder->seek(0.0)) {
+            stopCenterVideo();
+            return;
+        }
+        if (!d.videoDecoder->decodeNextFrame(&frame)) {
+            stopCenterVideo();
+            return;
+        }
+    }
+    d.videoDecoderOwner->image = frame;
+    viewport()->update();
+}
+
+void Window::toggleVideoPlayback()
+{
+    if (!d.videoDecoder) {
+        return;
+    }
+    d.videoPaused = !d.videoPaused;
+    if (d.videoPaused) {
+        d.videoPlaybackTimer.stop();
+    } else {
+        const double fps = d.videoDecoder->frameRate();
+        const int intervalMs = fps > 0.0 ? qMax(1, int(1000.0 / fps)) : 40;
+        d.videoPlaybackTimer.start(intervalMs, this);
+    }
+}
+
+void Window::videoSeekForward()
+{
+    if (!d.videoDecoder) {
+        return;
+    }
+    const double duration = d.videoDecoder->durationSeconds();
+    double target = d.videoSeekSeconds;
+    // We don't track current position so seek is relative-from-zero-ish; use
+    // the decoder's internal timestamp instead. Simpler: skip forward by
+    // grabbing N frames ahead.
+    const int framesToSkip = int(target * d.videoDecoder->frameRate());
+    QImage dummy;
+    for (int i = 0; i < framesToSkip; ++i) {
+        if (!d.videoDecoder->decodeNextFrame(&dummy)) {
+            break;
+        }
+    }
+    (void)duration;
+    advanceVideoFrame();
+}
+
+void Window::videoSeekBackward()
+{
+    if (!d.videoDecoder || !d.videoDecoderOwner) {
+        return;
+    }
+    // We don't track current position, so "seek backward" can only rewind to
+    // the start reliably. A real implementation would track the current pts
+    // and seek to (current - delta). For now, rewind and play from 0.
+    if (d.videoDecoder->seek(0.0)) {
+        advanceVideoFrame();
+    }
+}
+#else
+void Window::startCenterVideoIfAny() {}
+void Window::stopCenterVideo() {}
+void Window::advanceVideoFrame() {}
+void Window::toggleVideoPlayback() {}
+void Window::videoSeekForward() {}
+void Window::videoSeekBackward() {}
+#endif
 
 void Window::randomImage()
 {

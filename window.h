@@ -7,6 +7,7 @@
 #endif
 #include "threads.h"
 #include "flags.h"
+#include "video.h"
 
 struct Data {
     Data() : movie(0), rotation(0), flags(0) {}
@@ -40,7 +41,9 @@ struct Data {
         None = 0x0,
         Failed = 0x1,
         Seen = 0x2,
-        Network = 0x4
+        Network = 0x4,
+        Video = 0x8,
+        Pdf = 0x10
     };
     uint flags;
 };
@@ -53,6 +56,7 @@ public:
     ~Window();
 protected:
     bool event(QEvent *e);
+    bool eventFilter(QObject *watched, QEvent *e);
     void mouseMoveEvent(QMouseEvent *e);
     void mousePressEvent(QMouseEvent *e);
     void mouseReleaseEvent(QMouseEvent *e);
@@ -89,6 +93,9 @@ public slots:
     void cycleCenterBackward();
     void cycleNextForward();
     void cycleNextBackward();
+    void toggleVideoPlayback();
+    void videoSeekForward();
+    void videoSeekBackward();
     void randomImage();
     void randomSearchNext();
     void cyclePenColor();
@@ -195,6 +202,10 @@ private:
         QAction *cycleCenterBackward;
         QAction *cycleNextForward;
         QAction *cycleNextBackward;
+
+        QAction *toggleVideoPlayback;
+        QAction *videoSeekForward;
+        QAction *videoSeekBackward;
         QAction *randomImage;
 
         // Rotate / delete
@@ -248,6 +259,9 @@ private:
     void refreshActionLabels();
 
     void resetCycleCursors();
+    void startCenterVideoIfAny();
+    void stopCenterVideo();
+    void advanceVideoFrame();
 
     struct {
         Actions act;
@@ -295,6 +309,14 @@ private:
         QPoint pressPosition;
         bool midButtonPressed;
         QVector<QRect> rects;
+
+#ifdef VIDEO_ENABLED
+        VideoDecoder *videoDecoder;
+        Data *videoDecoderOwner;
+        QBasicTimer videoPlaybackTimer;
+        bool videoPaused;
+        double videoSeekSeconds;
+#endif
     } d;
 };
 

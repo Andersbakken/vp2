@@ -1,12 +1,13 @@
 #include "threads.h"
+#include "video.h"
+#include "magic.h"
 #include <QSet>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QDirIterator>
 #include <QDebug>
-#ifdef MAGICK_ENABLED
-#include <Magick++/Image.h>
-#include <Magick++/Geometry.h>
+#ifdef PDF_ENABLED
+#include <poppler-qt5.h>
 #endif
 
 ImageLoaderThread::ImageLoaderThread()
@@ -19,15 +20,15 @@ ImageLoaderThread::~ImageLoaderThread()
     clear();
 }
 
-void ImageLoaderThread::load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &size)
+void ImageLoaderThread::load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &size, const QString &path)
 {
-    Q_ASSERT(reader);
     Node *node = new Node;
     node->next = 0;
     node->flags = flags;
     node->rotation = rotation % 360;
     node->size = size;
     node->reader = reader;
+    node->path = path.isEmpty() && reader ? reader->fileName() : path;
     node->userData = userData;
     if (rotation % 180 == 90)
         qSwap(node->size.rwidth(), node->size.rheight());
@@ -114,53 +115,66 @@ void ImageLoaderThread::run()
             --mPending;
         }
         QImage img;
-#ifdef MAGICK_ENABLED
-        if (node->path.endsWith(".pdf", Qt::CaseInsensitive)) {
-            try {
-                Magick::Image pdf(node->path.toStdString());
-                if (pdf.isValid()) {
-                    if (!node->size.isNull()) {
-                        QSize size(pdf.columns(), pdf.rows());
-                        size.scale(node->size, Qt::KeepAspectRatio);
-                        pdf.scale(Magick::Geometry(size.width(), size.height()));
+        QSize originalSize;
+        const bool isPdf = node->path.endsWith(".pdf", Qt::CaseInsensitive);
+#ifdef PDF_ENABLED
+        if (isPdf) {
+            // Poppler renders PDF pages to a QImage at a chosen DPI. We pick a
+            // DPI that scales page 0's native point size (1pt = 1/72") to fit
+            // the requested node->size while preserving aspect ratio.
+            QScopedPointer<Poppler::Document> doc(Poppler::Document::load(node->path));
+            if (doc && !doc->isLocked() && doc->numPages() > 0) {
+                doc->setRenderHint(Poppler::Document::Antialiasing, true);
+                doc->setRenderHint(Poppler::Document::TextAntialiasing, true);
+                QScopedPointer<Poppler::Page> page(doc->page(0));
+                if (page) {
+                    const QSizeF pt = page->pageSizeF();
+                    originalSize = QSize(qRound(pt.width()), qRound(pt.height()));
+                    double dpi = 150.0;
+                    if (!node->size.isEmpty() && pt.width() > 0 && pt.height() > 0) {
+                        const double sx = (node->size.width() * 72.0) / pt.width();
+                        const double sy = (node->size.height() * 72.0) / pt.height();
+                        dpi = qMin(sx, sy);
                     }
-                    img = QImage(pdf.columns(), pdf.rows(), QImage::Format_RGB32);
-                    pdf.write(0, 0, img.width(), img.height(), "RGB", Magick::CharPixel, img.bits());
+                    img = page->renderToImage(dpi, dpi);
                 }
-            } catch (...) {
             }
         } else
+#else
+        if (isPdf) {
+            // PDF support not compiled in; fall through to image-reader path
+            // which will simply fail to load the file.
+        } else
 #endif
-        node->reader->setAutoTransform(true);
-        QSize originalSize = node->reader->size();
-        // QImageReader::size() returns the size BEFORE EXIF auto-transform.
-        // If the EXIF transform swaps width/height (90/270 rotation or the
-        // corresponding mirrored variants), pre-swap so the aspect-fit
-        // calculation against node->size operates on the post-transform
-        // orientation; otherwise setScaledSize yields an image that exceeds
-        // the requested bounds after Qt applies the rotation.
         {
-            const QImageIOHandler::Transformations tr = node->reader->transformation();
-            if (tr & (QImageIOHandler::TransformationRotate90)) {
-                originalSize.transpose();
-            }
-        }
-        {
-            QSize size;
-            if (!node->size.isEmpty()) {
-                size = originalSize;
-                size.scale(node->size, Qt::KeepAspectRatio);
-                if (!(node->flags & NoSmoothScale)) {
-                    QSize readerScaled = size;
-                    const QImageIOHandler::Transformations tr = node->reader->transformation();
-                    if (tr & (QImageIOHandler::TransformationRotate90)) {
-                        readerScaled.transpose();
-                    }
-                    node->reader->setScaledSize(readerScaled);
+            if (node->reader) {
+                node->reader->setAutoTransform(true);
+                originalSize = node->reader->size();
+                // QImageReader::size() returns the size BEFORE EXIF auto-transform.
+                // If the EXIF transform swaps width/height (90/270 rotation or the
+                // corresponding mirrored variants), pre-swap so the aspect-fit
+                // calculation against node->size operates on the post-transform
+                // orientation; otherwise setScaledSize yields an image that exceeds
+                // the requested bounds after Qt applies the rotation.
+                const QImageIOHandler::Transformations tr = node->reader->transformation();
+                if (tr & (QImageIOHandler::TransformationRotate90)) {
+                    originalSize.transpose();
                 }
-            }
-            if (node->reader->read(&img) && (node->flags & NoSmoothScale) && !size.isNull()) {
-                img = img.scaled(size);
+                QSize size;
+                if (!node->size.isEmpty()) {
+                    size = originalSize;
+                    size.scale(node->size, Qt::KeepAspectRatio);
+                    if (!(node->flags & NoSmoothScale)) {
+                        QSize readerScaled = size;
+                        if (tr & (QImageIOHandler::TransformationRotate90)) {
+                            readerScaled.transpose();
+                        }
+                        node->reader->setScaledSize(readerScaled);
+                    }
+                }
+                if (node->reader->read(&img) && (node->flags & NoSmoothScale) && !size.isNull()) {
+                    img = img.scaled(size);
+                }
             }
         }
         if (img.isNull()) {
@@ -216,6 +230,9 @@ bool FileNameThread::matches(const QString &absoluteFilePath) const
 
 void FileNameThread::run()
 {
+#ifdef MAGIC_ENABLED
+    MagicCookie cookie;
+#else
     QSet<QString> formats;
     if (!detectFileName) {
         const QList<QByteArray> ba = QImageReader::supportedImageFormats();
@@ -224,9 +241,23 @@ void FileNameThread::run()
             formats.insert(string);
             formats.insert(string.toUpper());
         }
+#ifdef PDF_ENABLED
         formats.insert("pdf");
         formats.insert("PDF");
+#endif
+#ifdef VIDEO_ENABLED
+        static const char *const videoExts[] = {
+            "mp4", "mov", "mkv", "webm", "avi",
+            "m4v", "mpg", "mpeg", "wmv", "flv",
+            "3gp", "ogv", "ts", 0
+        };
+        for (int i = 0; videoExts[i]; ++i) {
+            formats.insert(QString::fromLatin1(videoExts[i]));
+            formats.insert(QString::fromLatin1(videoExts[i]).toUpper());
+        }
+#endif
     }
+#endif
 
     QDirIterator it(directory, QDir::NoDotAndDotDot|QDir::Files|QDir::Dirs,
                     recurse ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
@@ -236,6 +267,11 @@ void FileNameThread::run()
         const QFileInfo fi = it.fileInfo();
         if (::matchSize(minSize, maxSize, fi)) {
             const QString absoluteFilePath = fi.absoluteFilePath();
+#ifdef MAGIC_ENABLED
+            if (matches(absoluteFilePath) && cookie.isSupported(absoluteFilePath)) {
+                emit file(absoluteFilePath);
+            }
+#else
             if (detectFileName) {
                 if (matches(absoluteFilePath) && ImageLoaderThread::canLoad(absoluteFilePath)) {
                     emit file(absoluteFilePath);
@@ -243,6 +279,7 @@ void FileNameThread::run()
             } else if (formats.contains(fi.suffix()) && matches(absoluteFilePath)) {
                 emit file(absoluteFilePath);
             }
+#endif
         }
         if (++index % 10 == 0 && isAborted()) {
             break;
@@ -269,8 +306,23 @@ void FileNameThread::setSizeConstraints(int min, int max)
 
 bool ImageLoaderThread::canLoad(const QString &fileName)
 {
-    return (!QImageReader::imageFormat(fileName).isEmpty()
-            || fileName.endsWith(".pdf", Qt::CaseInsensitive));
+#ifdef MAGIC_ENABLED
+    MagicCookie cookie;
+    return cookie.isSupported(fileName);
+#else
+    if (!QImageReader::imageFormat(fileName).isEmpty()) {
+        return true;
+    }
+#ifdef PDF_ENABLED
+    if (fileName.endsWith(".pdf", Qt::CaseInsensitive)) {
+        return true;
+    }
+#endif
+    if (isVideoPath(fileName)) {
+        return true;
+    }
+    return false;
+#endif
 }
 
 int ImageLoaderThread::pending() const

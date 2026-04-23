@@ -19,7 +19,7 @@ public:
         HighPriority = 0x2
     };
 
-    void load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &s = QSize());
+    void load(QImageReader *reader, uint flags, int rotation, void *userData, const QSize &s = QSize(), const QString &path = QString());
     bool remove(void *userData);
     static bool canLoad(const QString &fileName);
     int pending() const;
@@ -33,6 +33,7 @@ private:
     struct Node {
         ~Node() { delete reader; }
         QImageReader *reader;
+        QString path;
         QSize size;
         int rotation;
         uint flags;
