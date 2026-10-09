@@ -7,7 +7,8 @@
 #include <QDirIterator>
 #include <QDebug>
 #ifdef PDF_ENABLED
-#include <poppler-qt5.h>
+#include <memory>
+#include <poppler-qt6.h>
 #endif
 
 ImageLoaderThread::ImageLoaderThread()
@@ -122,11 +123,11 @@ void ImageLoaderThread::run()
             // Poppler renders PDF pages to a QImage at a chosen DPI. We pick a
             // DPI that scales page 0's native point size (1pt = 1/72") to fit
             // the requested node->size while preserving aspect ratio.
-            QScopedPointer<Poppler::Document> doc(Poppler::Document::load(node->path));
+            std::unique_ptr<Poppler::Document> doc = Poppler::Document::load(node->path);
             if (doc && !doc->isLocked() && doc->numPages() > 0) {
                 doc->setRenderHint(Poppler::Document::Antialiasing, true);
                 doc->setRenderHint(Poppler::Document::TextAntialiasing, true);
-                QScopedPointer<Poppler::Page> page(doc->page(0));
+                std::unique_ptr<Poppler::Page> page = doc->page(0);
                 if (page) {
                     const QSizeF pt = page->pageSizeF();
                     originalSize = QSize(qRound(pt.width()), qRound(pt.height()));
@@ -205,7 +206,8 @@ void ThumbLoaderThread::run()
     emit thumbLoaded(thumb);
 }
 
-FileNameThread::FileNameThread(const QString &dir, /*int min, int max, */const QRegExp &rx, const QRegExp &irx, bool detect, bool rec)
+FileNameThread::FileNameThread(const QString &dir, /*int min, int max, */const QRegularExpression &rx,
+                               const QRegularExpression &irx, bool detect, bool rec)
     : QThread(), directory(dir), /*minDepth(min), maxDepth(max), */aborted(false),
       regexp(rx), ignore(irx), detectFileName(detect), recurse(rec),
       minSize(-1), maxSize(-1)
@@ -224,8 +226,8 @@ static inline int matchSize(int min, int max, const QFileInfo &fi)
 
 bool FileNameThread::matches(const QString &absoluteFilePath) const
 {
-    return (regexp.isEmpty() || absoluteFilePath.contains(regexp))
-        && (ignore.isEmpty() || !absoluteFilePath.contains(ignore));
+    return (regexp.pattern().isEmpty() || regexp.match(absoluteFilePath).hasMatch())
+        && (ignore.pattern().isEmpty() || !ignore.match(absoluteFilePath).hasMatch());
 }
 
 void FileNameThread::run()

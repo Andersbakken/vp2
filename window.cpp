@@ -1,5 +1,19 @@
 #include "window.h"
 
+static QRegularExpression wildcardRegexp(const QString &pattern, bool caseInsensitive)
+{
+    QRegularExpression::PatternOptions options = QRegularExpression::NoPatternOption;
+    if (caseInsensitive) {
+        options |= QRegularExpression::CaseInsensitiveOption;
+    }
+    const QRegularExpression::WildcardConversionOptions conversionOptions =
+        QRegularExpression::UnanchoredWildcardConversion
+        | QRegularExpression::NonPathWildcardConversion;
+    return QRegularExpression(
+        QRegularExpression::wildcardToRegularExpression(pattern, conversionOptions),
+        options);
+}
+
 static QDir backupDir()
 {
     QDir dir = QDir::home();
@@ -471,7 +485,7 @@ void Window::mousePressEvent(QMouseEvent *e)
         if (d.data.isEmpty()) {
             addImages();
         } else if (d.data.size() > 1) {
-            if (e->modifiers() & Qt::ShiftModifier || (e->x() < viewport()->width() / 2)) {
+            if (e->modifiers() & Qt::ShiftModifier || (e->position().x() < viewport()->width() / 2)) {
                 moveCurrentIndexBy(-1);
             } else {
                 moveCurrentIndexBy(1);
@@ -728,9 +742,9 @@ void Window::parseArgs(const QStringList &argsIn)
         args.replace(i, opt);
         args.insert(i + 1, val);
     }
-    const QRegExp multi("^-[A-Za-z][A-Za-z]+$");
+    const QRegularExpression multi("^-[A-Za-z][A-Za-z]+$");
     for (int i=1; i<args.size(); ++i) {
-        if (multi.exactMatch(args.at(i))) {
+        if (multi.match(args.at(i)).hasMatch()) {
             const QString arg = args.takeAt(i);
             for (int j=1; j<arg.size(); ++j) {
                 args.insert(i + j - 1, QString("-%1").arg(arg.at(j)));
@@ -862,7 +876,8 @@ void Window::parseArgs(const QStringList &argsIn)
                 break;
             case ::Dash: {
                 QFile file;
-                file.open(stdin, QIODevice::ReadOnly);
+                if (!file.open(stdin, QIODevice::ReadOnly))
+                    break;
                 while (!file.atEnd()) {
                     QString line = file.readLine();
                     if (line.isEmpty())
@@ -983,9 +998,7 @@ void Window::parseArgs(const QStringList &argsIn)
                 break;
             case ::Name:
             case ::IName: {
-                d.regexp.setPattern(args.at(++i));
-                d.regexp.setPatternSyntax(QRegExp::Wildcard);
-                d.regexp.setCaseSensitivity(options[option].type == IName ? Qt::CaseInsensitive : Qt::CaseSensitive);
+                d.regexp = wildcardRegexp(args.at(++i), options[option].type == IName);
                 if (!d.regexp.isValid()) {
                     errorMessage = QString("'%1' is not a valid regexp").arg(args.at(i));
                 }
@@ -1006,9 +1019,7 @@ void Window::parseArgs(const QStringList &argsIn)
 
             case ::Ignore:
             case ::IIgnore: {
-                d.ignoreRegexp.setPattern(args.at(++i));
-                d.ignoreRegexp.setPatternSyntax(QRegExp::Wildcard);
-                d.ignoreRegexp.setCaseSensitivity(options[option].type == Ignore ? Qt::CaseInsensitive : Qt::CaseSensitive);
+                d.ignoreRegexp = wildcardRegexp(args.at(++i), options[option].type == Ignore);
                 if (!d.ignoreRegexp.isValid()) {
                     errorMessage = QString("'%1' is not a valid regexp").arg(args.at(i));
                 }
@@ -1019,13 +1030,10 @@ void Window::parseArgs(const QStringList &argsIn)
                 // /pattern/ selects regex mode; anything else is wildcard.
                 // A lone "/" or "//" is treated as a wildcard of that literal.
                 if (raw.size() >= 2 && raw.startsWith('/') && raw.endsWith('/')) {
-                    d.ignoreRegexp.setPattern(raw.mid(1, raw.size() - 2));
-                    d.ignoreRegexp.setPatternSyntax(QRegExp::RegExp);
+                    d.ignoreRegexp = QRegularExpression(raw.mid(1, raw.size() - 2));
                 } else {
-                    d.ignoreRegexp.setPattern(raw);
-                    d.ignoreRegexp.setPatternSyntax(QRegExp::Wildcard);
+                    d.ignoreRegexp = wildcardRegexp(raw, false);
                 }
-                d.ignoreRegexp.setCaseSensitivity(Qt::CaseSensitive);
                 if (!d.ignoreRegexp.isValid()) {
                     errorMessage = QString("'%1' is not a valid pattern").arg(raw);
                 }
@@ -1688,7 +1696,7 @@ static inline bool compareDataAlphabetically(const Data *left, const Data *right
     return left->path < right->path;
 }
 
-static inline int toUInt(const QStringRef &ref)
+static inline int toUInt(QStringView ref)
 {
     int number = 0;
     for (int i=0; i<ref.size(); ++i) {
@@ -1703,7 +1711,7 @@ static inline int toUInt(const QStringRef &ref)
 
 struct Section {
     Section() : integer(-1) {}
-    Section(const QStringRef &r, bool number) : ref(r), integer(-1) {
+    Section(QStringView r, bool number) : ref(r), integer(-1) {
         if (number)
             integer = ::toUInt(r);
     }
@@ -1726,7 +1734,7 @@ struct Section {
         return ret;
     }
 
-    QStringRef ref;
+    QStringView ref;
     int integer;
 };
 
@@ -1744,12 +1752,12 @@ static inline QList<Section> encode(const QString *string)
                 state = (number ? Number : NotNumber);
             } else if (number != (state == Number)) {
                 state = (number ? Number : NotNumber);
-                const QStringRef ref(string, last, i - last);
+                const QStringView ref = QStringView(*string).mid(last, i - last);
                 ret.append(Section(ref, !number));
                 last = i;
             }
         }
-        const QStringRef ref(string, last, size - last);
+        const QStringView ref = QStringView(*string).mid(last, size - last);
         ret.append(Section(ref, state == Number));
         data[string] = ret;
     } else {
@@ -1795,11 +1803,11 @@ static inline bool compareDataBySize(const Data *left, const Data *right)
 
 static inline bool compareDataByCreationDate(const Data *left, const Data *right)
 {
-    static QHash<const Data*, uint> date;
+    static QHash<const Data*, qint64> date;
 #define FIND_DATE(arg)                                              \
-    uint &date_ ## arg = date[arg];                                 \
+    qint64 &date_ ## arg = date[arg];                               \
     if (date_ ## arg == 0) {                                        \
-        date_ ## arg = QFileInfo(arg->path).birthTime().toTime_t();   \
+        date_ ## arg = QFileInfo(arg->path).birthTime().toSecsSinceEpoch(); \
     }
 
     FIND_DATE(left);
@@ -2408,11 +2416,24 @@ bool Window::purge()
     }
     // ### todo, nicer dialog with thumbnails of images
 
-    switch (QMessageBox::question(this, tr("Delete images"), tr("These images are marked for deletion:\n")
-                                  + list.join("\n") + "\n" + tr("Are you sure?"),
-                                  tr("Yes"), test(Closing) ? tr("No, but close ") + QCoreApplication::applicationName()
-                                  : QString(),
-                                  test(Closing) ? tr("Abort") : tr("No"))) {
+    QMessageBox messageBox(QMessageBox::Question, tr("Delete images"),
+                           tr("These images are marked for deletion:\n")
+                           + list.join("\n") + "\n" + tr("Are you sure?"),
+                           QMessageBox::NoButton, this);
+    QAbstractButton *yesButton = messageBox.addButton(tr("Yes"), QMessageBox::AcceptRole);
+    QAbstractButton *noButton = messageBox.addButton(
+        test(Closing) ? tr("No, but close ") + QCoreApplication::applicationName() : tr("No"),
+        QMessageBox::RejectRole);
+    QAbstractButton *abortButton = nullptr;
+    if (test(Closing))
+        abortButton = messageBox.addButton(tr("Abort"), QMessageBox::DestructiveRole);
+    messageBox.setDefaultButton(qobject_cast<QPushButton *>(yesButton));
+    messageBox.exec();
+
+    const int choice = messageBox.clickedButton() == yesButton ? 0
+        : messageBox.clickedButton() == noButton ? 1
+        : (abortButton && messageBox.clickedButton() == abortButton) ? 2 : -1;
+    switch (choice) {
     case 0:
         foreach(Data *dt, d.toDelete) {
             removeFile(dt);
@@ -2598,12 +2619,14 @@ void Window::onLineEditReturnPressed()
         const QStringList splits = d.lineEdit->text().split(";", Qt::SkipEmptyParts);
         bool ok = false;
         for (int i=0; i<splits.size(); ++i) {
-            QRegExp rx(" *([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+) *");
-            if (!rx.exactMatch(splits.at(i))) {
+            const QRegularExpression rx(" *([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+)[^0-9]+([0-9]+) *");
+            const QRegularExpressionMatch match = rx.match(splits.at(i));
+            if (!match.hasMatch() || match.capturedLength() != splits.at(i).size()) {
                 qDebug() << "Can't parse rect" << d.lineEdit->text();
             } else {
                 ok = true;
-                QRect r(rx.cap(1).toInt(), rx.cap(2).toInt(), rx.cap(3).toInt(), rx.cap(4).toInt());
+                QRect r(match.captured(1).toInt(), match.captured(2).toInt(),
+                        match.captured(3).toInt(), match.captured(4).toInt());
                 d.rects.append(r);
             }
         }

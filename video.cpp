@@ -246,7 +246,7 @@ bool VideoDecoder::decodeNextFrame(QImage *out)
 
     *out = QImage(outW, outH, QImage::Format_RGBA8888);
     uint8_t *dstData[4] = { out->bits(), 0, 0, 0 };
-    int dstStride[4] = { out->bytesPerLine(), 0, 0, 0 };
+    int dstStride[4] = { static_cast<int>(out->bytesPerLine()), 0, 0, 0 };
     sws_scale(d->swsCtx, d->frame->data, d->frame->linesize, 0, h,
               dstData, dstStride);
     return true;

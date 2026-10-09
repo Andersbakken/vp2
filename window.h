@@ -2,9 +2,8 @@
 #define WINDOW_H
 #include <QtGui>
 #include <QtNetwork>
-#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
 #include <QtWidgets>
-#endif
+#include <QRegularExpression>
 #include "threads.h"
 #include "flags.h"
 #include "video.h"
@@ -289,7 +288,7 @@ private:
         QString indexBuffer;
         QSet<FileNameThread*> fileNameThreads;
         QColor penColor;
-        QRegExp regexp, ignoreRegexp;
+        QRegularExpression regexp, ignoreRegexp;
 
         QRect areas[NumAreas];
 

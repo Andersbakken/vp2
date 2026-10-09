@@ -2,6 +2,7 @@
 #define THREADS_H
 
 #include <QtGui>
+#include <QRegularExpression>
 
 class ImageLoaderThread : public QThread
 {
@@ -61,7 +62,8 @@ class FileNameThread : public QThread
 {
     Q_OBJECT
 public:
-    FileNameThread(const QString &dir, /*int min, int max, */const QRegExp &rx, const QRegExp &irx, bool detectFileName, bool recurse);
+    FileNameThread(const QString &dir, /*int min, int max, */const QRegularExpression &rx,
+                   const QRegularExpression &irx, bool detectFileName, bool recurse);
     void setSizeConstraints(int min, int max);
     void run();
     bool isAborted() const;
@@ -75,7 +77,7 @@ private:
     //const int maxDepth;
     volatile bool aborted;
     mutable QMutex abortMutex;
-    const QRegExp regexp, ignore;
+    const QRegularExpression regexp, ignore;
     const bool detectFileName;
     const bool recurse;
     int minSize, maxSize;
